@@ -1,0 +1,3 @@
+rootProject.name = 'Recom3Workout'
+include ':app', ':reconUI'
+

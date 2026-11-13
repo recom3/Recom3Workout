@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="workout_background">#081D27</color>
+    <string name="app_name">Recom3 Workout</string>
+    <style name="WorkoutTheme" parent="android:Theme.NoTitleBar.Fullscreen">
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowBackground">@color/workout_background</item>
+        <item name="android:colorBackground">@color/workout_background</item>
+    </style>
+</resources>
+
