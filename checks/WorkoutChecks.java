@@ -68,9 +68,9 @@ public final class WorkoutChecks {
         phases.segment(-1.2, 600);
         phases.segment(1.2, 300);
         phases.segment(0, 500);
-        check(phases.engine.count() == 1, "debounce rejects motion without rearming");
+        check(phases.engine.count() == 2, "complete consecutive cycles count without a forced rest");
         phases.rep(300, 1.2);
-        check(phases.engine.count() == 2, "next full cycle after debounce");
+        check(phases.engine.count() == 3, "next full cycle after debounce");
 
         Trace incomplete = new Trace(Exercise.PUSH_UP, 0);
         incomplete.segment(1.2, 300);
@@ -140,6 +140,128 @@ public final class WorkoutChecks {
             counted |= detector.sample(ms, signal);
         }
         check(!counted, "configurable amplitude rejects an otherwise complete cycle");
+
+        Trace startup = new Trace(Exercise.SQUAT, .5);
+        startup.engine.clearSensors();
+        startup.segment(-.9, 300);
+        startup.segment(0, 2500);
+        check(startup.engine.state().equals("READY") && Math.abs(startup.engine.signal()) < .1
+                && startup.engine.count() == 0, "quiet interval recovers a biased startup baseline");
+        startup.rep(300, 1.2);
+        check(startup.engine.count() == 1, "full cycle counts after baseline recovery");
+        startup.engine.clearSensors();
+        startup.gyro = false;
+        startup.segment(-.7, 300);
+        startup.segment(0, 2500);
+        check(startup.engine.state().equals("READY") && Math.abs(startup.engine.signal()) < .1
+                && startup.engine.count() == 1, "baseline recovery also works without a gyro");
+        startup.segment(0, 10000);
+        check(startup.engine.count() == 1, "resting baseline adaptation creates no repetitions");
+
+        Trace positioning = new Trace(Exercise.PUSH_UP, .3);
+        positioning.engine.reset();
+        for (int i = 0; i < 40; i++) positioning.sample(0, .6);
+        check(positioning.engine.state().equals("HOLD_STILL") && positioning.engine.count() == 0,
+                "head rotation while positioning keeps the detector unarmed");
+        positioning.segment(0, 1200);
+        check(positioning.engine.state().equals("READY"), "quiet workout posture arms detection");
+        positioning.rep(300, .6);
+        check(positioning.engine.count() == 0, "push-up profile rejects small complete motion cycles");
+        positioning.rep(300, 1.4);
+        check(positioning.engine.count() == 1, "push-up profile accepts a full-amplitude cycle after arming");
+
+        Profile settlingProfile = new Profile(Exercise.SQUAT);
+        settlingProfile.change(RELEASE, 18);
+        RepDetector settling = new RepDetector(settlingProfile);
+        int settledCount = 0;
+        for (int ms = 0; ms <= 2600; ms += 25) {
+            int phase = (ms - 200) % 1200;
+            double movement;
+            if (ms < 200) movement = 0;
+            else if (phase < 300) movement = 1;
+            else if (phase < 800) movement = -1;
+            else if (phase < 1100) movement = 1;
+            else if (phase == 1100) movement = .1;
+            else movement = .30;
+            if (settling.sample(ms, -movement)) settledCount++;
+        }
+        check(settledCount == 2, "neutral-band chatter does not cancel completed returns");
+
+        RepDetector continuous = new RepDetector(settlingProfile);
+        int continuousCount = 0;
+        for (int ms = 0; ms <= 2500; ms += 25) {
+            int phase = (ms - 200) % 1125;
+            double movement;
+            if (ms < 200) movement = 0;
+            else if (phase < 300) movement = 1;
+            else if (phase < 800) movement = -1;
+            else if (phase < 1100) movement = 1;
+            else movement = .1;
+            if (continuous.sample(ms, -movement)) continuousCount++;
+        }
+        check(continuousCount == 2, "brief neutral crossing closes each continuous movement cycle");
+
+        Profile cooldownProfile = new Profile(Exercise.SQUAT);
+        cooldownProfile.change(MIN_TIME, 200);
+        cooldownProfile.change(DEBOUNCE, 600);
+        RepDetector cooldown = new RepDetector(cooldownProfile);
+        cooldown.arm();
+        int cooldownCount = 0;
+        for (int ms = 0; ms < 1000; ms += 25) {
+            int phase = ms % 300;
+            double movement;
+            if (phase < 75) movement = 1;
+            else if (phase < 175) movement = -1;
+            else if (phase < 250) movement = 1;
+            else movement = .1;
+            if (cooldown.sample(ms, -movement)) cooldownCount++;
+        }
+        check(cooldownCount == 2, "configured debounce still limits repeated complete cycles");
+
+        Trace hanging = new Trace(Exercise.PULL_UP, .3);
+        hanging.engine.clearSensors();
+        for (int i = 0; i < 40; i++) hanging.sample(i % 2 == 0 ? .5 : -.5, .12);
+        check(hanging.engine.state().equals("READY") && hanging.engine.count() == 0,
+                "pull-up arming tolerates bar vibration without counting it");
+        hanging.rep(300, 1.4);
+        check(hanging.engine.count() == 1, "pull-up cycle counts after preparing while hanging");
+        hanging.rep(300, .6);
+        check(hanging.engine.count() == 1, "pull-up amplitude rejects a small complete motion cycle");
+
+        RepDetector linkedPulls = new RepDetector(new Profile(Exercise.PULL_UP));
+        linkedPulls.arm();
+        int linkedCount = 0;
+        for (int ms = 0; ms < 3300; ms += 25) {
+            double signal = ms % 1600 < 800 ? 1.5 : -1.5;
+            if (linkedPulls.sample(ms, signal)) linkedCount++;
+        }
+        check(linkedCount == 2, "pull-up braking can flow into the next pull without a neutral pause");
+
+        Trace partialPull = new Trace(Exercise.PULL_UP, .3);
+        partialPull.segment(1.4, 300);
+        partialPull.segment(-1.4, 600);
+        partialPull.segment(0, 1200);
+        check(partialPull.engine.count() == 0, "pull-up without return braking stays incomplete");
+
+        RepDetector rapidPulls = new RepDetector(new Profile(Exercise.PULL_UP));
+        rapidPulls.arm();
+        int rapidCount = 0;
+        for (int ms = 0; ms < 2000; ms += 25) {
+            double signal = ms % 400 < 200 ? 1.5 : -1.5;
+            if (rapidPulls.sample(ms, signal)) rapidCount++;
+        }
+        check(rapidCount == 0, "rapid alternating motion does not satisfy pull-up cycle duration");
+
+        Trace preparingPull = new Trace(Exercise.PULL_UP, .3);
+        preparingPull.engine.reset();
+        for (int i = 0; i < 30; i++) preparingPull.sample(i % 2 == 0 ? .5 : -.5, .25);
+        check(preparingPull.engine.state().equals("PREPARING"),
+                "pull-up preparation waits briefly while hanging is unsteady");
+        for (int i = 0; i < 15; i++) preparingPull.sample(i % 2 == 0 ? .5 : -.5, .25);
+        check(!preparingPull.engine.waitingForStillness() && preparingPull.engine.count() == 0,
+                "pull-up preparation finishes after one second despite head motion");
+        preparingPull.rep(300, 1.4);
+        check(preparingPull.engine.count() == 1, "pull-up counts after timed median-reference preparation");
         System.out.println(passed + " checks passed");
     }
 }

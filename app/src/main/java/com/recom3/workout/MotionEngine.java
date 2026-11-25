@@ -1,28 +1,49 @@
 package com.recom3.workout;
 
+import java.util.Arrays;
+
 /** Sensor timestamps are in nanoseconds. Acceleration is in m/s² and gyro in rad/s. */
 final class MotionEngine {
     private static final long GAP_NS = 200000000L;
     private static final long GYRO_FRESH_NS = 80000000L;
     private static final long WARM_UP_NS = 300000000L;
+    private static final long REST_WINDOW_NS = 800000000L;
+    private static final long PULL_UP_PREPARATION_NS = 1000000000L;
+    private final Exercise exercise;
     private final RepDetector detector;
+    private final long[] restTimes = new long[64];
+    private final double[] restValues = new double[64];
+    private final double[] restRotation = new double[64];
+    private int restIndex, restSamples;
     private long firstAccel, lastAccel, lastGyro;
     private double gx, gy, gz, wx, wy, wz;
     private double baseline, signal;
     private boolean running;
+    private boolean armed;
+    private long armStarted;
     private int count;
 
     MotionEngine(Profile profile) {
+        exercise = profile.exercise;
         detector = new RepDetector(profile);
     }
 
     void setRunning(boolean running) {
-        if (this.running != running) detector.reset();
+        if (this.running != running) {
+            detector.reset();
+            armed = false;
+            armStarted = lastAccel;
+            if (running && exercise == Exercise.PULL_UP) clearSensors();
+        }
         this.running = running;
     }
 
     boolean running() {
         return running;
+    }
+
+    boolean waitingForStillness() {
+        return running && !armed;
     }
 
     int count() {
@@ -37,10 +58,16 @@ final class MotionEngine {
     void reset() {
         count = 0;
         detector.reset();
+        armed = false;
+        armStarted = lastAccel;
+        if (exercise == Exercise.PULL_UP) clearSensors();
     }
 
     void clearSensors() {
         lastAccel = lastGyro = 0;
+        restSamples = restIndex = 0;
+        armed = false;
+        armStarted = 0;
         signal = 0;
         detector.reset();
     }
@@ -52,6 +79,7 @@ final class MotionEngine {
     String state() {
         if (!running) return "PAUSED";
         if (!warmedUp()) return "WARMING";
+        if (!armed) return exercise == Exercise.PULL_UP ? "PREPARING" : "HOLD_STILL";
         return detector.state().name();
     }
 
@@ -81,8 +109,11 @@ final class MotionEngine {
             gy = y / length;
             gz = z / length;
             baseline = length;
+            restSamples = restIndex = 0;
             signal = 0;
             firstAccel = lastAccel = ns;
+            armed = false;
+            armStarted = ns;
             detector.reset();
             return false;
         }
@@ -113,10 +144,80 @@ final class MotionEngine {
         // Jet firmware can report a resting magnitude different from standard gravity.
         double projected = x * gx + y * gy + z * gz;
         if (!warmedUp()) baseline += dt / (0.15 + dt) * (projected - baseline);
+        updateRestBaseline(ns, projected, gyroFresh ? wx * wx + wy * wy + wz * wz : 0, dt);
         double vertical = projected - baseline;
-        signal += dt / (0.065 + dt) * (vertical - signal);
-        if (!running || !warmedUp() || !detector.sample(ns / 1000000L, signal)) return false;
+        signal += dt / (exercise.filterTimeSeconds + dt) * (vertical - signal);
+        if (!running || !warmedUp()) return false;
+        if (!armed) {
+            // Establish the workout posture before accepting an outbound phase.
+            double quiet = quietMean(ns, exercise.stillnessWindowNs, exercise.stillnessVariance);
+            if (Double.isNaN(quiet) && exercise == Exercise.PULL_UP
+                    && ns - armStarted >= PULL_UP_PREPARATION_NS) {
+                quiet = medianReference(ns);
+            }
+            if (ns - armStarted >= exercise.stillnessWindowNs
+                    && !Double.isNaN(quiet)) {
+                baseline = quiet;
+                signal = 0;
+                detector.arm();
+                armed = true;
+            }
+            return false;
+        }
+        if (!detector.sample(ns / 1000000L, signal)) return false;
         count++;
         return true;
+    }
+
+    private double medianReference(long ns) {
+        double[] samples = new double[restSamples];
+        int count = 0;
+        for (int i = 0; i < restSamples; i++) {
+            if (ns - restTimes[i] <= REST_WINDOW_NS) samples[count++] = restValues[i];
+        }
+        if (count == 0) return Double.NaN;
+        Arrays.sort(samples, 0, count);
+        return (samples[(count - 1) / 2] + samples[count / 2]) / 2;
+    }
+
+    private void updateRestBaseline(long ns, double projected, double rotation, double dt) {
+        restTimes[restIndex] = ns;
+        restValues[restIndex] = projected;
+        restRotation[restIndex] = rotation;
+        restIndex = (restIndex + 1) % restTimes.length;
+        restSamples = Math.min(restSamples + 1, restTimes.length);
+
+        RepDetector.State state = detector.state();
+        if (state != RepDetector.State.WAIT_NEUTRAL && state != RepDetector.State.READY
+                && state != RepDetector.State.DEBOUNCE) return;
+
+        double mean = quietMean(ns, REST_WINDOW_NS, 0.04);
+        if (Double.isNaN(mean)) return;
+
+        // Relearn the measured resting magnitude after a noisy startup or a posture change.
+        // Keep the filter in the same reference frame without creating an acceleration pulse.
+        double correction = dt / (0.30 + dt) * (mean - baseline);
+        baseline += correction;
+        signal -= correction;
+    }
+
+    private double quietMean(long ns, long windowNs, double maximumVariance) {
+        double total = 0, squared = 0, rotationTotal = 0;
+        long oldest = ns;
+        int samples = 0;
+        for (int i = 0; i < restSamples; i++) {
+            if (ns - restTimes[i] > windowNs) continue;
+            double value = restValues[i];
+            total += value;
+            squared += value * value;
+            rotationTotal += restRotation[i];
+            oldest = Math.min(oldest, restTimes[i]);
+            samples++;
+        }
+        if (ns - oldest < windowNs - 50000000L) return Double.NaN;
+        double mean = total / samples;
+        double variance = Math.max(0, squared / samples - mean * mean);
+        if (variance > maximumVariance || rotationTotal / samples > 0.04) return Double.NaN;
+        return mean;
     }
 }

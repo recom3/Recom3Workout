@@ -20,11 +20,12 @@ import static com.recom3.workout.Profile.Setting.SETS;
 import static com.recom3.workout.Profile.Setting.TARGET;
 
 public final class WorkoutActivity extends Activity implements SensorEventListener {
-    private enum Screen { HUD, MENU, DIAGNOSTICS, CALIBRATION }
+    private enum Screen { HUD, MENU, SETUP, DIAGNOSTICS, CALIBRATION, SUMMARY }
     private static final int SAMPLE_US = 25000;
     private static final String TAG = "Recom3Workout";
     private static final String[] ACTIONS = {
-            "Add a rep", "Subtract a rep", "Reset reps", "Next set", "Diagnostics", "Calibration"
+            "Workout setup", "Add a rep", "Subtract a rep", "Reset reps", "Next set",
+            "Diagnostics", "Calibration", "Export CSV", "New workout"
     };
     private static final Profile.Setting[] SETTINGS = Profile.Setting.values();
     private final Handler handler = new Handler();
@@ -41,26 +42,58 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
     private SharedPreferences preferences;
     private Profile profile;
     private MotionEngine workout, diagnostic;
+    private WorkoutSession session;
+    private SessionStore sessions;
+    private WorkoutSync sync;
+    private String syncNotice = "";
+    private boolean csvReady;
     private Screen screen = Screen.HUD;
     private CsvRecording recording;
-    private int exerciseIndex, set = 1, menuIndex, settingIndex;
+    private int exerciseIndex, set = 1, menuIndex, settingIndex, setupIndex;
     private long flashUntil;
+    private long setCompletedAt;
     private String message = "";
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         preferences = getSharedPreferences("workout", MODE_PRIVATE);
+        sessions = new SessionStore(getFilesDir(), getExternalFilesDir("workouts"));
+        try {
+            session = sessions.load();
+        } catch (IOException failure) {
+            message = "Workout history read failed";
+            Log.e(TAG, message, failure);
+        }
+        if (session == null) {
+            session = new WorkoutSession(readProfiles());
+            try {
+                sessions.save(session);
+            } catch (IOException failure) {
+                message = "Workout history save failed";
+                Log.e(TAG, message, failure);
+            }
+        }
+        SharedPreferences.Editor goals = preferences.edit();
+        for (Exercise exercise : Exercise.values()) {
+            goals.putInt(exercise.name() + "." + TARGET.name(), session.target(exercise));
+            goals.putInt(exercise.name() + "." + SETS.name(), session.plannedSets(exercise));
+        }
+        goals.apply();
         sensors = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         accel = stream(Sensor.TYPE_ACCELEROMETER);
         gyro = stream(Sensor.TYPE_GYROSCOPE);
         loadExercise(preferences.getInt("exercise", 0));
-        if (state != null) {
+        if (state != null && session.id.equals(state.getString("workout_id"))) {
             set = Math.max(1, Math.min(state.getInt("set"), profile.get(SETS)));
-            workout.correct(state.getInt("reps"));
+            workout.reset();
+            workout.correct(Math.max(0, state.getInt("reps")));
         }
         hud = new WorkoutHud(this);
         setContentView(hud);
+        if (session.complete()) screen = Screen.SUMMARY;
+        sync = WorkoutSync.get(this);
+        sync.startup();
         render();
     }
 
@@ -72,18 +105,41 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         return profile.exercise.name() + "." + setting.name();
     }
 
-    private void loadExercise(int index) {
-        Exercise[] exercises = Exercise.values();
-        exerciseIndex = (index + exercises.length) % exercises.length;
-        profile = new Profile(exercises[exerciseIndex]);
+    private Profile readProfile(Exercise exercise) {
+        Profile loaded = new Profile(exercise);
         // Load bounds in an order that also permits a saved pair above or below both defaults.
         for (int pass = 0; pass < 2; pass++) {
             for (Profile.Setting setting : SETTINGS) {
-                profile.change(setting, preferences.getInt(key(setting), profile.get(setting)));
+                loaded.change(setting, preferences.getInt(exercise.name() + "." + setting.name(),
+                        loaded.get(setting)));
             }
         }
+        return loaded;
+    }
+
+    private Profile[] readProfiles() {
+        Exercise[] exercises = Exercise.values();
+        Profile[] profiles = new Profile[exercises.length];
+        for (int i = 0; i < exercises.length; i++) profiles[i] = readProfile(exercises[i]);
+        return profiles;
+    }
+
+    private void loadExercise(int index) {
+        Exercise[] exercises = Exercise.values();
+        exerciseIndex = (index + exercises.length) % exercises.length;
+        profile = readProfile(exercises[exerciseIndex]);
+        profile.change(TARGET, session.target(profile.exercise));
+        profile.change(SETS, session.plannedSets(profile.exercise));
         workout = new MotionEngine(profile);
-        set = 1;
+        selectSet(Math.min(session.completedSets(profile.exercise) + 1, profile.get(SETS)));
+    }
+
+    private void selectSet(int number) {
+        set = number;
+        workout.reset();
+        WorkoutSession.SetResult result = session.result(profile.exercise, set);
+        if (result != null) workout.correct(result.reps);
+        setCompletedAt = 0;
         flashUntil = 0;
     }
 
@@ -91,13 +147,14 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         super.onSaveInstanceState(state);
         state.putInt("set", set);
         state.putInt("reps", workout.count());
+        state.putString("workout_id", session.id);
     }
 
     @Override protected void onResume() {
         super.onResume();
         register(accel);
         register(gyro);
-        if (diagnostic != null) diagnostic.setRunning(true);
+        if (session.started()) exportSession();
         handler.post(refresh);
     }
 
@@ -129,7 +186,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
             engine.gyro(event.timestamp, stream.x, stream.y, stream.z);
         } else if (engine.accel(event.timestamp, stream.x, stream.y, stream.z) && engine == workout) {
             flashUntil = now + 550;
-            if (complete()) workout.setRunning(false);
+            if (complete()) finishSet();
             render();
         }
         if (recording != null) {
@@ -179,6 +236,18 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
                 else if (select) selectAction();
                 else menuIndex = (menuIndex + (up || left ? ACTIONS.length - 1 : 1)) % ACTIONS.length;
                 break;
+            case SETUP:
+                message = "";
+                if (back) screen = session.complete() ? Screen.SUMMARY : Screen.MENU;
+                else if (up || down || select) {
+                    setupIndex = (setupIndex + (up ? 2 : 1)) % 3;
+                } else if (setupIndex == 0) {
+                    loadExercise(exerciseIndex + (right ? 1 : -1));
+                    preferences.edit().putInt("exercise", exerciseIndex).apply();
+                } else {
+                    changeSetting(setupIndex == 1 ? TARGET : SETS, right ? 1 : -1);
+                }
+                break;
             case DIAGNOSTICS:
                 if (back) {
                     stopRecording();
@@ -196,12 +265,14 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
                 else if (up || down || select) {
                     settingIndex = (settingIndex + (up ? SETTINGS.length - 1 : 1)) % SETTINGS.length;
                 } else {
-                    Profile.Setting setting = SETTINGS[settingIndex];
-                    int value = profile.get(setting) + (right ? setting.step : -setting.step);
-                    if (profile.change(setting, value)) {
-                        preferences.edit().putInt(key(setting), value).apply();
-                        set = Math.min(set, profile.get(SETS));
-                    } else message = "Limit reached";
+                    changeSetting(SETTINGS[settingIndex], right ? 1 : -1);
+                }
+                break;
+            case SUMMARY:
+                if (back) screen = Screen.HUD;
+                else if (select) {
+                    if (!csvReady) exportSession();
+                    else newWorkout();
                 }
                 break;
         }
@@ -211,35 +282,172 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
 
     private void toggleWorkout() {
         if (workout.running()) workout.setRunning(false);
-        else if (complete()) message = "Open Menu for the next set";
+        else if (complete()) {
+            if (session.result(profile.exercise, set) == null) finishSet();
+            else advanceAfterSet();
+        }
         else if (!accel.live(SystemClock.elapsedRealtime())) message = "Waiting for accelerometer";
-        else workout.setRunning(true);
+        else {
+            if (!session.started()) {
+                WorkoutSession next = new WorkoutSession(session);
+                next.begin(System.currentTimeMillis());
+                if (!saveSession(next)) return;
+            }
+            setCompletedAt = 0;
+            workout.setRunning(true);
+        }
     }
 
     private void selectAction() {
         switch (menuIndex) {
-            case 0: workout.correct(1); break;
-            case 1: workout.correct(-1); break;
-            case 2: workout.reset(); break;
+            case 0:
+                screen = Screen.SETUP;
+                setupIndex = 0;
+                return;
+            case 1: correctCount(1); break;
+            case 2: correctCount(-1); break;
             case 3:
-                if (set < profile.get(SETS)) {
-                    set++;
+                WorkoutSession reset = new WorkoutSession(session);
+                reset.resetFrom(profile.exercise, set);
+                if (saveSession(reset)) {
                     workout.reset();
-                } else message = "Already on the last set";
+                    setCompletedAt = 0;
+                }
                 break;
             case 4:
+                if (session.result(profile.exercise, set) == null) {
+                    WorkoutSession next = new WorkoutSession(session);
+                    next.record(profile.exercise, set, workout.count(), System.currentTimeMillis(),
+                            complete() ? "TARGET" : "MANUAL");
+                    if (!saveSession(next)) break;
+                }
+                advanceAfterSet();
+                break;
+            case 5:
                 screen = Screen.DIAGNOSTICS;
                 diagnostic = new MotionEngine(profile);
-                diagnostic.setRunning(true);
                 return;
-            case 5:
+            case 6:
                 screen = Screen.CALIBRATION;
                 settingIndex = 0;
+                return;
+            case 7:
+                try {
+                    int count = sessions.exportAll();
+                    csvReady = true;
+                    message = count + " workout CSV files exported";
+                } catch (IOException failure) {
+                    csvReady = false;
+                    message = "CSV export pending";
+                    Log.e(TAG, message, failure);
+                } catch (SecurityException failure) {
+                    csvReady = false;
+                    message = "CSV export pending";
+                    Log.e(TAG, message, failure);
+                }
+                break;
+            case 8:
+                newWorkout();
                 return;
             default: return;
         }
         flashUntil = 0;
-        screen = Screen.HUD;
+        if (screen != Screen.SUMMARY) screen = Screen.HUD;
+    }
+
+    private void changeSetting(Profile.Setting setting, int direction) {
+        int previous = profile.get(setting);
+        int value = previous + direction * setting.step;
+        if (!profile.change(setting, value)) {
+            message = "Limit reached";
+            return;
+        }
+        if (setting == TARGET || setting == SETS) {
+            WorkoutSession next = new WorkoutSession(session);
+            next.plan(profile.exercise, profile.get(TARGET), profile.get(SETS));
+            if (!saveSession(next)) {
+                profile.change(setting, previous);
+                return;
+            }
+            if (set > profile.get(SETS)) selectSet(profile.get(SETS));
+        }
+        preferences.edit().putInt(key(setting), value).apply();
+    }
+
+    private void correctCount(int delta) {
+        WorkoutSession.SetResult previous = session.result(profile.exercise, set);
+        if (previous != null) {
+            WorkoutSession next = new WorkoutSession(session);
+            next.record(profile.exercise, set, Math.max(0, workout.count() + delta),
+                    previous.completedAt, "CORRECTED");
+            if (!saveSession(next)) return;
+        }
+        workout.correct(delta);
+        if (complete() && previous == null) finishSet();
+    }
+
+    private void finishSet() {
+        workout.setRunning(false);
+        if (setCompletedAt == 0) setCompletedAt = System.currentTimeMillis();
+        WorkoutSession next = new WorkoutSession(session);
+        next.record(profile.exercise, set, workout.count(), setCompletedAt, "TARGET");
+        if (saveSession(next)) advanceAfterSet();
+    }
+
+    private void advanceAfterSet() {
+        Exercise next = session.nextExercise(profile.exercise);
+        if (next == null) {
+            screen = Screen.SUMMARY;
+            return;
+        }
+        boolean sameExercise = next == profile.exercise;
+        loadExercise(next.ordinal());
+        preferences.edit().putInt("exercise", exerciseIndex).apply();
+        if (csvReady) message = sameExercise ? "Set saved · OK start" : "Next exercise · OK";
+    }
+
+    private boolean saveSession(WorkoutSession next) {
+        try {
+            sessions.save(next);
+            session = next;
+            csvReady = !session.started();
+            if (session.started()) exportSession();
+            if (session.complete()) sync.completed(session);
+            return true;
+        } catch (IOException failure) {
+            message = "Workout save failed · OK retry";
+            Log.e(TAG, message, failure);
+            return false;
+        } catch (SecurityException failure) {
+            message = "Workout save failed · OK retry";
+            Log.e(TAG, message, failure);
+            return false;
+        }
+    }
+
+    private void exportSession() {
+        try {
+            sessions.export(session);
+            csvReady = true;
+            if (message.equals("Workout saved · CSV export pending")) message = "";
+        } catch (IOException failure) {
+            csvReady = false;
+            message = "Workout saved · CSV export pending";
+            Log.e(TAG, message, failure);
+        } catch (SecurityException failure) {
+            csvReady = false;
+            message = "Workout saved · CSV export pending";
+            Log.e(TAG, message, failure);
+        }
+    }
+
+    private void newWorkout() {
+        WorkoutSession next = new WorkoutSession(readProfiles());
+        if (saveSession(next)) {
+            loadExercise(exerciseIndex);
+            message = "";
+            screen = Screen.HUD;
+        }
     }
 
     private void startRecording() {
@@ -273,6 +481,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
             recordingFailed(failure);
         } finally {
             recording = null;
+            diagnostic.setRunning(false);
         }
     }
 
@@ -282,6 +491,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
             try { recording.close(); } catch (IOException ignored) {}
         }
         recording = null;
+        diagnostic.setRunning(false);
         message = "CSV write failed";
     }
 
@@ -290,16 +500,31 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         switch (screen) {
             case HUD:
                 hud.workout(profile, workout.count(), set, workout.running(), complete(),
-                        now < flashUntil, accel.status(now), gyro.status(now), message);
+                        now < flashUntil, accel.status(now), gyro.status(now),
+                        workout.waitingForStillness() ? "Hold still to start" : message);
                 break;
             case MENU:
                 hud.menu(ACTIONS, menuIndex);
+                break;
+            case SETUP:
+                hud.setup(profile, setupIndex, message);
                 break;
             case DIAGNOSTICS:
                 hud.diagnostics(profile, accel, gyro, diagnostic, recording, now, message);
                 break;
             case CALIBRATION:
                 hud.calibration(profile, SETTINGS[settingIndex], message);
+                break;
+            case SUMMARY:
+                SyncQueue.State syncState = sync.state(session.id);
+                hud.summary(session, csvReady, syncState == SyncQueue.State.SYNCED);
+                String notice = session.id + ":" + syncState;
+                if (!notice.equals(syncNotice) && syncState != SyncQueue.State.PENDING) {
+                    syncNotice = notice;
+                    android.widget.Toast.makeText(this, syncState == SyncQueue.State.SYNCED
+                            ? "Workout synced with ICE3." : "Workout saved. ICE3 sync pending.",
+                            android.widget.Toast.LENGTH_SHORT).show();
+                }
                 break;
         }
     }
