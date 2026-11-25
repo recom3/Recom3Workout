@@ -16,6 +16,7 @@ function Invoke-BuildTool {
 $env:JAVA_HOME = $Jdk
 $tools = Join-Path $Sdk 'build-tools/27.0.3'
 $platform = Join-Path $Sdk 'platforms/android-27/android.jar'
+$version = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'gradle.properties') -Raw | ConvertFrom-StringData
 $app = Join-Path $PSScriptRoot 'app/src/main'
 $recon = Join-Path $PSScriptRoot 'reconUI/src/main'
 $build = Join-Path $PSScriptRoot 'app/build/standalone'
@@ -29,7 +30,7 @@ $manifest = Join-Path $app 'AndroidManifest.xml'
 Invoke-BuildTool "$tools/aapt.exe" @(
     'package', '-f', '-m', '--auto-add-overlay', '-J', $generated, '--extra-packages', 'com.reconinstruments.ui',
     '-M', $manifest, '-S', "$app/res", '-S', "$recon/res", '-I', $platform, '-F', $resources,
-    '--debug-mode', '--min-sdk-version', '16', '--target-sdk-version', '16', '--version-code', '1', '--version-name', '0.1.0'
+    '--debug-mode', '--min-sdk-version', '16', '--target-sdk-version', '16', '--version-code', $version.workoutVersionCode, '--version-name', $version.workoutVersionName
 )
 
 $sources = @(Get-ChildItem -Path "$app/java", "$recon/java", $generated -Filter '*.java' -Recurse |

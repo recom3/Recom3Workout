@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "44b7c131-65c7-4184-abbd-5be3154ade48",
+  "startedAt": "2026-11-25T09:46:40.000Z",
+  "completedAt": "2026-11-25T09:46:40.003Z",
+  "status": "completed",
+  "source": "recom3-workout",
+  "exercises": [
+    {
+      "exerciseId": "pull-ups",
+      "repsTarget": 10,
+      "setsTarget": 1,
+      "sets": [
+        {
+          "setId": "pull-ups-1",
+          "setNumber": 1,
+          "repsTarget": 10,
+          "setsTargetAtCompletion": 1,
+          "repsCompleted": 10,
+          "completedAt": "2026-11-25T09:46:40.001Z",
+          "completionReason": "TARGET"
+        }
+      ]
+    },
+    {
+      "exerciseId": "squats",
+      "repsTarget": 10,
+      "setsTarget": 1,
+      "sets": [
+        {
+          "setId": "squats-1",
+          "setNumber": 1,
+          "repsTarget": 10,
+          "setsTargetAtCompletion": 1,
+          "repsCompleted": 10,
+          "completedAt": "2026-11-25T09:46:40.002Z",
+          "completionReason": "TARGET"
+        }
+      ]
+    },
+    {
+      "exerciseId": "push-ups",
+      "repsTarget": 10,
+      "setsTarget": 1,
+      "sets": [
+        {
+          "setId": "push-ups-1",
+          "setNumber": 1,
+          "repsTarget": 10,
+          "setsTargetAtCompletion": 1,
+          "repsCompleted": 10,
+          "completedAt": "2026-11-25T09:46:40.003Z",
+          "completionReason": "TARGET"
+        }
+      ]
+    }
+  ]
+}

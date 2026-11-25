@@ -10,6 +10,7 @@ final class RepDetector {
     private State state;
     private long started;
     private long neutralSince;
+    private long lastCounted = -1;
     private double high, low;
 
     RepDetector(Profile profile) {
@@ -26,10 +27,19 @@ final class RepDetector {
         neutralSince = -1;
     }
 
+    void arm() {
+        state = State.READY;
+        neutralSince = -1;
+    }
+
     boolean sample(long ms, double signal) {
         double movement = signal * profile.exercise.direction;
         double trigger = profile.acceleration(TRIGGER);
         boolean neutral = Math.abs(movement) <= profile.acceleration(RELEASE);
+        if (state == State.DEBOUNCE && movement >= trigger) {
+            begin(ms, movement);
+            return false;
+        }
         if (state == State.WAIT_NEUTRAL || state == State.DEBOUNCE) {
             if (!neutral) neutralSince = -1;
             else if (neutralSince < 0) neutralSince = ms;
@@ -38,10 +48,7 @@ final class RepDetector {
         }
         if (state == State.READY) {
             if (movement >= trigger) {
-                started = ms;
-                high = movement;
-                low = 0;
-                state = State.OUTBOUND;
+                begin(ms, movement);
             }
             return false;
         }
@@ -51,14 +58,24 @@ final class RepDetector {
             reset();
             return false;
         }
-        high = Math.max(high, movement);
-        low = Math.min(low, movement);
+        if (state != State.SETTLING) {
+            high = Math.max(high, movement);
+            low = Math.min(low, movement);
+        }
         switch (state) {
             case OUTBOUND:
                 if (movement <= -trigger) state = State.REVERSAL;
                 break;
             case REVERSAL:
-                if (movement >= trigger) state = State.RETURN;
+                if (movement >= trigger) {
+                    if (profile.exercise == Exercise.PULL_UP) {
+                        // Bottom braking can flow directly into the next pull.
+                        boolean completed = complete(ms, ms);
+                        begin(ms, movement);
+                        return completed;
+                    }
+                    state = State.RETURN;
+                }
                 break;
             case RETURN:
                 if (movement <= -trigger) state = State.REVERSAL;
@@ -68,20 +85,38 @@ final class RepDetector {
                 }
                 break;
             case SETTLING:
-                if (!neutral) state = movement <= -trigger ? State.REVERSAL : State.RETURN;
+                if (movement >= trigger) {
+                    // A complete return reached neutral before the next outbound phase.
+                    boolean completed = complete(neutralSince, ms);
+                    begin(ms, movement);
+                    return completed;
+                } else if (movement <= -trigger) state = State.REVERSAL;
                 else if (ms - neutralSince >= profile.get(DEBOUNCE) / 2) {
-                    if (neutralSince - started < profile.get(MIN_TIME)
-                            || high - low < profile.acceleration(AMPLITUDE)) {
-                        reset();
-                        return false;
-                    }
-                    state = State.DEBOUNCE;
-                    return true;
+                    return complete(neutralSince, ms);
                 }
                 break;
             default:
                 break;
         }
         return false;
+    }
+
+    private void begin(long ms, double movement) {
+        started = ms;
+        high = movement;
+        low = 0;
+        state = State.OUTBOUND;
+    }
+
+    private boolean complete(long completedAt, long countedAt) {
+        if (completedAt - started < profile.get(MIN_TIME)
+                || high - low < profile.acceleration(AMPLITUDE)
+                || lastCounted >= 0 && countedAt - lastCounted < profile.get(DEBOUNCE)) {
+            reset();
+            return false;
+        }
+        state = State.DEBOUNCE;
+        lastCounted = countedAt;
+        return true;
     }
 }

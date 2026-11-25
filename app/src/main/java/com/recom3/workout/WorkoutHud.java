@@ -47,16 +47,43 @@ final class WorkoutHud extends View {
         countColor = flash || complete ? GREEN : WHITE;
         summary = "Target " + profile.get(TARGET) + "   ·   Set " + set + "/" + profile.get(SETS);
         status = !message.isEmpty() ? message : complete
-                ? (set == profile.get(SETS) ? "Workout complete" : "Set complete") : flash ? "+1 rep" : "";
+                ? (set == profile.get(SETS) ? "Exercise complete" : "Set complete") : flash ? "+1 rep" : "";
         statusColor = message.isEmpty() ? GREEN : AMBER;
         lines[5] = "Accel " + accel + "   ·   Gyro " + gyro;
         invalidate();
     }
 
     void menu(String[] actions, int index) {
-        screen("WORKOUT MENU", "", MUTED, "↑ ↓ Move    OK Select    Back HUD");
-        System.arraycopy(actions, 0, lines, 0, lines.length);
-        selected = index;
+        screen("WORKOUT MENU", (index + 1) + "/" + actions.length, MUTED,
+                "↑ ↓ Move    OK Select    Back HUD");
+        int first = Math.max(0, index - lines.length + 1);
+        int count = Math.min(lines.length, actions.length - first);
+        System.arraycopy(actions, first, lines, 0, count);
+        selected = index - first;
+        invalidate();
+    }
+
+    void setup(Profile profile, int field, String message) {
+        screen("WORKOUT SETUP", "", MUTED, "↑ ↓ Field    ← → Adjust    Back Menu");
+        lines[0] = "Exercise    " + profile.exercise.label;
+        lines[2] = "Target reps    " + profile.get(TARGET);
+        lines[3] = "Total sets    " + profile.get(SETS);
+        lines[5] = message.isEmpty() ? "Saved for this exercise" : message;
+        selected = field == 0 ? 0 : field + 1;
+        invalidate();
+    }
+
+    void summary(WorkoutSession session, boolean csvReady, boolean ice3Synced) {
+        screen("CONGRATS!", session.totalReps() + " REPS", GREEN, csvReady ? "OK New workout    Back Review"
+                : "OK Retry CSV    Back Review");
+        lines[0] = session.totalCompletedSets() + " sets completed";
+        int row = 1;
+        for (Exercise exercise : Exercise.values()) {
+            lines[row++] = exercise.label + "    " + session.reps(exercise) + " reps    ·    "
+                    + session.completedSets(exercise) + "/" + session.plannedSets(exercise) + " sets";
+        }
+        lines[4] = ice3Synced ? "Synced with ICE3" : "ICE3 sync pending";
+        lines[5] = csvReady ? "Workout CSV saved" : "Saved locally · CSV export pending";
         invalidate();
     }
 

@@ -7,8 +7,8 @@ android {
         applicationId 'com.recom3.workout'
         minSdkVersion 16
         targetSdkVersion 16
-        versionCode 1
-        versionName '0.1.0'
+        versionCode project.property('workoutVersionCode').toInteger()
+        versionName project.property('workoutVersionName')
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_7
