@@ -1,5 +1,7 @@
 # Workout results to ICE3: phase 1
 
+For the current incoming Web routine receiver, see [template-sync.md](template-sync.md). The SESSION/SESSION_STORED contract below remains unchanged. Snow3's Android receiver/upload path has since been implemented separately; the original iOS-only handoff notes below describe that initial inspection, not a new limitation on Android session sync.
+
 Version 0.1.12 / code 13. Only Recom3Workout is changed. No phone application, server, web catalog, firmware or Uplink integration is deployed by this change.
 
 ## What is implemented and what remains
@@ -39,7 +41,7 @@ No direct Bluetooth socket, Wi-Fi protocol, external library, new permission, In
 | `sets[].completedAt` | Recorded completion time; not an estimated motion duration. |
 | `sets[].completionReason` | Existing `TARGET`, `MANUAL` or `CORRECTED` reason. |
 
-`workoutId` and `templateRevision` are omitted because Workout does not have those identifiers. A future API/template integration can add optional fields in a documented compatible revision. No heart rate, load, calories, set start time, user identity, phone address or credentials are invented. UTC formatting does not correct an inaccurate glasses clock.
+`workoutId` and `templateRevision` are deliberately omitted from results to preserve the agreed SESSION schema 1/API contract, even when a Web template is used locally. No fields are added without a separately agreed results contract. No heart rate, load, calories, set start time, user identity, phone address or credentials are invented. UTC formatting does not correct an inaccurate glasses clock.
 
 The existing app permits explicitly ending partial sets. `completed` describes its routine completion semantics, not a claim that every target was achieved. Actual counts and completion reasons remain authoritative. If a completed routine is corrected and becomes complete again, its **same** session ID carries a changed payload digest and is queued for an upsert. The receiver must not insert a second session for it.
 

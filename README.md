@@ -28,6 +28,14 @@ Version 0.1.12 adds an app-private persistent queue of completed-workout JSON ob
 
 The glasses sender is implemented. **ICE3 iOS was inspected read-only: its OBJECT framing is compatible, but it does not yet persist workouts or return the required acknowledgement. End-to-end iOS synchronization has not been validated.** The receiver must add the workout action, safe local persistence, deduplication and acknowledgement described in [the schema and receiver contract](docs/ice3-sync.md). No other repository is modified, and no APK is automatically deployed.
 
+## Receive Web routines from ICE3
+
+Version 0.1.13 / code 14 receives Snow3's existing TEMPLATE protocol over Recon OBJECT, validates and atomically saves the complete routine, then sends TEMPLATE_STORED. A persistent review screen shows each exercise and set; OK accepts the complete snapshot, Back/Later keeps the current workout. **New workout** uses only approved individual targets (1–20 sets, 1–100 reps); an already started session keeps its goals. Without a synced routine, local goals remain available. A stored routine waiting to be applied shows **NEW ROUTINE**; a session started from an accepted routine keeps a **WEB** origin label. The local **Replace synced routine** confirmation supports changing ICE3 user/device without treating routine IDs as account identity.
+
+The Jet preserves 100-rep targets, but the current Snow3 result receiver still caps target fields at 99. Results containing a 100 target remain pending until that separate phone/API compatibility follow-up; they are never clamped.
+
+See [the protocol, safe handoff policy and real-device test steps](docs/template-sync.md). Result JSON schema 1 and the existing session sync queue are unchanged. Historical/uniform CSVs retain their format; numbered PLAN rows preserve nonuniform future targets in new sessions.
+
 ## Controls
 
 The app accepts the same Select/OK key events as Recom3Ghost. Use the Jet's directional touchpad swipes or equivalent D-pad inputs. [Recon Jet owner manual](https://fccid.io/m/895259af0d76fda203311f4ed5b2657f051e1a39543cc581d18ee9abe695fe49.pdf)
@@ -36,10 +44,12 @@ The app accepts the same Select/OK key events as Recom3Ghost. Use the Jet's dire
 | --- | --- |
 | Workout | Left/Right selects an exercise while paused and restores its set progress. OK starts or pauses. Up/Down opens the menu and pauses detection. Back pauses a running workout or exits from the paused HUD. |
 | Menu | Move with the directions and press OK to select Workout setup, add or subtract a rep, reset the current set, advance to the next set, open Diagnostics or Calibration, export CSV files, or start a new workout. Back returns to the workout. |
-| Workout setup | Up/Down selects Exercise, Target reps or Total sets. Left/Right changes the selected value. Changes save per exercise. Back returns to the menu. |
+| Workout setup | Up/Down selects Exercise, Set, Target reps or Total sets. Left/Right changes the selected value. Targets save per set; other existing targets are retained. Back returns to the menu. |
 | Diagnostics | OK starts a recording, then adds one ground-truth marker per press. Right saves and stops. Back saves and returns to the menu. |
 | Calibration | Up/Down selects a field, Left/Right adjusts it, and Back returns to the menu. Changes save immediately for the current exercise. |
 | Congrats | OK starts a new workout after CSV export succeeds. If export is pending, OK retries it. Back returns to the HUD for review. |
+| Routine review | Left/Right changes exercise (1/3 is the first exercise), Up/Down scrolls sets, OK accepts the whole routine, Back keeps it for later. |
+| Replace synced routine | OK permits one valid incoming routine to replace the saved context for two minutes; Back cancels. The current workout stays unchanged. |
 
 Set completion saves the result, pauses counting and automatically prepares the next set with a zero counter. After the last set of an exercise, the app selects the next unfinished exercise (Squats → Push-ups → Pull-ups → Squats), skipping completed exercises. Press **OK** when ready to start each set. Left/Right can still select an exercise while paused. The default is three sets with targets of 8 pull-ups, 12 squats or 10 push-ups per set. Completed sets, exercise goals and the active workout survive relaunch. Keep the app in the foreground while detecting or recording.
 

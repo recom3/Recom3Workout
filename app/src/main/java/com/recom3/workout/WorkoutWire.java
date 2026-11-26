@@ -8,6 +8,8 @@ import java.security.MessageDigest;
 final class WorkoutWire {
     static final String SESSION = "com.recom3.workout.SESSION";
     static final String STORED = "com.recom3.workout.SESSION_STORED";
+    static final String TEMPLATE = "com.recom3.workout.TEMPLATE";
+    static final String TEMPLATE_STORED = "com.recom3.workout.TEMPLATE_STORED";
     static final int MAX_FRAME = 25600;
     final int request;
     final String sender, action, info;
@@ -29,7 +31,7 @@ final class WorkoutWire {
         if (buffer.remaining() < 4) throw new IOException("Truncated Recon field");
         int length = buffer.getInt();
         if (length < 0 || length > 1024 || length > buffer.remaining()) throw new IOException("Invalid Recon field");
-        byte[] bytes = new byte[length]; buffer.get(bytes); return new String(bytes, "UTF-8");
+        byte[] bytes = new byte[length]; buffer.get(bytes); return TemplateJson.utf8(bytes);
     }
     static WorkoutWire decode(byte[] data) throws IOException {
         if (data == null || data.length < 20 || data.length > MAX_FRAME) throw new IOException("Invalid Recon frame");
@@ -54,5 +56,36 @@ final class WorkoutWire {
             }
             return text.toString();
         } catch (java.security.NoSuchAlgorithmException unavailable) { throw new IOException(unavailable); }
+    }
+
+    /** Bounded assembly for fragmented/coalesced OBJECT delivery; no new framing. */
+    static final class Decoder {
+        private byte[] pending = new byte[0];
+        private long last;
+        java.util.List<WorkoutWire> append(byte[] bytes, long nowMs) throws IOException {
+            if (nowMs < last || nowMs - last > 5000) pending = new byte[0];
+            last = nowMs;
+            if (bytes == null || bytes.length == 0 || bytes.length > MAX_FRAME
+                    || pending.length + bytes.length > 2 * MAX_FRAME) {
+                pending = new byte[0]; throw new IOException("Invalid OBJECT fragment");
+            }
+            byte[] all = new byte[pending.length + bytes.length];
+            System.arraycopy(pending, 0, all, 0, pending.length);
+            System.arraycopy(bytes, 0, all, pending.length, bytes.length);
+            java.util.List<WorkoutWire> result = new java.util.ArrayList<WorkoutWire>();
+            int offset = 0;
+            try {
+                while (all.length - offset >= 4) {
+                    int length = ByteBuffer.wrap(all, offset, 4).getInt();
+                    if (length < 20 || length > MAX_FRAME) throw new IOException("Invalid OBJECT length");
+                    if (all.length - offset < length) break;
+                    byte[] frame = new byte[length]; System.arraycopy(all, offset, frame, 0, length);
+                    result.add(decode(frame)); offset += length;
+                }
+                pending = new byte[all.length - offset];
+                System.arraycopy(all, offset, pending, 0, pending.length);
+                return result;
+            } catch (IOException invalid) { pending = new byte[0]; throw invalid; }
+        }
     }
 }

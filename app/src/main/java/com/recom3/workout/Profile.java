@@ -10,7 +10,7 @@ final class Profile {
         MIN_TIME("Min cycle", 50, 200, 4000),
         MAX_TIME("Max cycle", 250, 500, 15000),
         DEBOUNCE("Debounce", 20, 40, 600),
-        TARGET("Target reps", 1, 1, 99),
+        TARGET("Target reps", 1, 1, 100),
         SETS("Total sets", 1, 1, 20);
 
         final String label;

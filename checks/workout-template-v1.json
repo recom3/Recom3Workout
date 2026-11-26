@@ -1,0 +1,1 @@
+{"schemaVersion":1,"workoutId":"web-routine-1","revision":7,"exercises":[{"exerciseId":"squats","name":"Squats","sets":[{"setId":"squats-1","repsTarget":10},{"setId":"squats-2","repsTarget":12}]},{"exerciseId":"push-ups","name":"Push-ups","sets":[{"setId":"push-ups-1","repsTarget":5}]},{"exerciseId":"pull-ups","name":"Pull-ups","sets":[{"setId":"pull-ups-1","repsTarget":4}]}]}
