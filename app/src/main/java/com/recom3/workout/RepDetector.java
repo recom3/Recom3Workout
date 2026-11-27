@@ -33,7 +33,7 @@ final class RepDetector {
     }
 
     boolean sample(long ms, double signal) {
-        double movement = signal * profile.exercise.direction;
+        double movement = signal * profile.get(DIRECTION);
         double trigger = profile.acceleration(TRIGGER);
         boolean neutral = Math.abs(movement) <= profile.acceleration(RELEASE);
         if (state == State.DEBOUNCE && movement >= trigger) {
@@ -68,7 +68,7 @@ final class RepDetector {
                 break;
             case REVERSAL:
                 if (movement >= trigger) {
-                    if (profile.exercise == Exercise.PULL_UP) {
+                    if (profile.linked()) {
                         // Bottom braking can flow directly into the next pull.
                         boolean completed = complete(ms, ms);
                         begin(ms, movement);

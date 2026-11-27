@@ -67,7 +67,8 @@ final class CsvRecording implements Closeable {
 
     private void write(long now, MotionEngine engine, String marker) throws IOException {
         row.append(',').append(engine.signal()).append(',').append(engine.state()).append(',')
-                .append(engine.count()).append(',').append(marker).append(",,,,,,,,,");
+                .append(engine.count()).append(',').append(marker);
+        for (int i = 0; i <= Profile.Setting.values().length; i++) row.append(',');
         writer.write(row.toString());
         writer.newLine();
         if (now - lastFlush >= 1000) {

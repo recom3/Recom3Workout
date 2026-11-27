@@ -10,6 +10,8 @@ final class WorkoutWire {
     static final String STORED = "com.recom3.workout.SESSION_STORED";
     static final String TEMPLATE = "com.recom3.workout.TEMPLATE";
     static final String TEMPLATE_STORED = "com.recom3.workout.TEMPLATE_STORED";
+    static final String ROUTINE_V2 = "com.recom3.workout.ROUTINE_V2";
+    static final String ROUTINE_V2_STORED = "com.recom3.workout.ROUTINE_V2_STORED";
     static final int MAX_FRAME = 25600;
     final int request;
     final String sender, action, info;

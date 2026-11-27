@@ -6,6 +6,8 @@ import java.io.StringReader;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Locale;
 import java.util.TimeZone;
 import java.util.UUID;
@@ -20,6 +22,7 @@ final class WorkoutSession {
         final int number, reps, target, plannedSets;
         final long completedAt;
         final String reason;
+        String calibration;
 
         SetResult(Exercise exercise, int number, int reps, int target, int plannedSets,
                   long completedAt, String reason) {
@@ -35,31 +38,57 @@ final class WorkoutSession {
 
     final String id;
     private long startedAt;
-    private final int[] targets = new int[Exercise.values().length];
-    private final int[] sets = new int[Exercise.values().length];
-    private final int[][] setTargets = new int[Exercise.values().length][20];
+    private final LinkedHashMap<Exercise, int[]> plans = new LinkedHashMap<Exercise, int[]>();
+    private final Map<Exercise, Integer> sets = new LinkedHashMap<Exercise, Integer>();
+    private final Map<Exercise, Profile> profiles = new LinkedHashMap<Exercise, Profile>();
+    boolean dynamic;
+    String routineHash = "";
     private final List<SetResult> results = new ArrayList<SetResult>();
 
     WorkoutSession(Profile[] profiles) {
         this(UUID.randomUUID().toString(), 0);
+        if (profiles.length < 1 || profiles.length > 8) throw new IllegalArgumentException("Exercise limit");
         for (Profile profile : profiles) {
+            if (plans.containsKey(profile.exercise)) throw new IllegalArgumentException("Duplicate exercise");
+            this.profiles.put(profile.exercise, profile.copy());
             plan(profile.exercise, profile.get(Profile.Setting.TARGET), profile.get(Profile.Setting.SETS));
         }
+        dynamic = !legacyShape();
+        if (totalPlannedSets() > 60) throw new IllegalArgumentException("Total set limit");
     }
 
     WorkoutSession(WorkoutSession other) {
         this(other.id, other.startedAt);
-        System.arraycopy(other.targets, 0, targets, 0, targets.length);
-        System.arraycopy(other.sets, 0, sets, 0, sets.length);
-        for (int i = 0; i < setTargets.length; i++)
-            System.arraycopy(other.setTargets[i], 0, setTargets[i], 0, 20);
-        results.addAll(other.results);
+        for (Exercise exercise : other.exercises()) {
+            plans.put(exercise, other.plans.get(exercise).clone());
+            sets.put(exercise, other.sets.get(exercise));
+            profiles.put(exercise, other.profile(exercise));
+        }
+        dynamic = other.dynamic; routineHash = other.routineHash;
+        for (SetResult result : other.results) {
+            SetResult copy = new SetResult(result.exercise, result.number, result.reps, result.target, result.plannedSets, result.completedAt, result.reason);
+            copy.calibration = result.calibration; results.add(copy);
+        }
     }
 
     static WorkoutSession create(Profile[] fallback, WorkoutTemplate template) {
+        if (template != null) {
+            Exercise[] order = template.dynamic() ? template.exercises() : Exercise.values();
+            Profile[] selected = new Profile[order.length];
+            for (int i = 0; i < order.length; i++) {
+                for (Profile candidate : fallback) if (candidate.exercise.equals(order[i])) selected[i] = new Profile(order[i], candidate);
+                if (selected[i] == null) throw new IllegalArgumentException("Missing local profile");
+                int[] goals = template.targets(order[i]);
+                selected[i].change(Profile.Setting.TARGET, goals[0]);
+                selected[i].change(Profile.Setting.SETS, goals.length);
+            }
+            fallback = selected;
+        }
         WorkoutSession session = new WorkoutSession(fallback);
         if (template != null) {
-            for (Exercise exercise : Exercise.values()) {
+            if (template.dynamic()) session.dynamic = true;
+            session.routineHash = template.hash;
+            for (Exercise exercise : template.exercises()) {
                 int[] goals = template.targets(exercise);
                 session.plan(exercise, goals[0], goals.length);
                 for (int number = 1; number <= goals.length; number++) session.target(exercise, number, goals[number - 1]);
@@ -68,12 +97,40 @@ final class WorkoutSession {
         return session;
     }
 
-    private WorkoutSession(String id, long startedAt) {
+    WorkoutSession(String id, long startedAt) {
         if (!UUID.fromString(id).toString().equals(id) || startedAt < 0) {
             throw new IllegalArgumentException("Invalid workout identity");
         }
         this.id = id;
         this.startedAt = startedAt;
+    }
+
+    Exercise[] exercises() { return plans.keySet().toArray(new Exercise[plans.size()]); }
+    int indexOf(Exercise exercise) {
+        Exercise[] list = exercises();
+        for (int i = 0; i < list.length; i++) if (list[i].equals(exercise)) return i;
+        throw new IllegalArgumentException("Exercise absent");
+    }
+    Exercise exercise(String id) {
+        for (Exercise exercise : exercises()) if (exercise.id.equals(id)) return exercise;
+        throw new IllegalArgumentException("Exercise absent");
+    }
+    private int[] goals(Exercise exercise) {
+        int[] goals = plans.get(exercise);
+        if (goals == null) throw new IllegalArgumentException("Exercise absent");
+        return goals;
+    }
+    Profile profile(Exercise exercise) { return profiles.get(exercise).copy(); }
+    void profile(Profile profile) { indexOf(profile.exercise); profiles.put(profile.exercise, profile.copy()); }
+    private boolean legacyShape() {
+        if (plans.size() != 3) return false;
+        for (Exercise exercise : Exercise.values()) if (!plans.containsKey(exercise)) return false;
+        return true;
+    }
+    boolean legacy() { return !dynamic && legacyShape(); }
+    private int totalPlannedSets() {
+        int count = 0; for (Integer value : sets.values()) count += value;
+        return count;
     }
 
     void begin(long now) {
@@ -93,42 +150,46 @@ final class WorkoutSession {
         if (target < 1 || target > 100 || totalSets < 1 || totalSets > 20) {
             throw new IllegalArgumentException("Invalid workout goal");
         }
-        targets[exercise.ordinal()] = target;
-        sets[exercise.ordinal()] = totalSets;
-        java.util.Arrays.fill(setTargets[exercise.ordinal()], target);
+        if (!plans.containsKey(exercise) && plans.size() >= 8) throw new IllegalArgumentException("Exercise limit");
+        int oldSets = sets.containsKey(exercise) ? sets.get(exercise) : 0;
+        if (totalPlannedSets() - oldSets + totalSets > 60) throw new IllegalArgumentException("Total set limit");
+        int[] goals = new int[20]; java.util.Arrays.fill(goals, target);
+        plans.put(exercise, goals); sets.put(exercise, totalSets);
+        if (!profiles.containsKey(exercise)) profiles.put(exercise, new Profile(exercise));
     }
 
     int target(Exercise exercise) {
-        return targets[exercise.ordinal()];
+        return goals(exercise)[0];
     }
 
     int plannedSets(Exercise exercise) {
-        return sets[exercise.ordinal()];
+        if (!sets.containsKey(exercise)) throw new IllegalArgumentException("Exercise absent");
+        return sets.get(exercise);
     }
 
     int target(Exercise exercise, int number) {
         if (number < 1 || number > 20) throw new IllegalArgumentException("Invalid set number");
-        return setTargets[exercise.ordinal()][number - 1];
+        return goals(exercise)[number - 1];
     }
 
     void target(Exercise exercise, int number, int value) {
         if (number < 1 || number > plannedSets(exercise) || value < 1 || value > 100)
             throw new IllegalArgumentException("Invalid set target");
-        setTargets[exercise.ordinal()][number - 1] = value;
-        if (number == 1) targets[exercise.ordinal()] = value;
+        goals(exercise)[number - 1] = value;
     }
 
     void resize(Exercise exercise, int totalSets) {
         if (totalSets < 1 || totalSets > 20) throw new IllegalArgumentException("Invalid set count");
         int previous = plannedSets(exercise);
+        if (totalPlannedSets() - previous + totalSets > 60) throw new IllegalArgumentException("Total set limit");
         for (int number = previous + 1; number <= totalSets; number++)
-            setTargets[exercise.ordinal()][number - 1] = target(exercise, previous);
-        sets[exercise.ordinal()] = totalSets;
+            goals(exercise)[number - 1] = target(exercise, previous);
+        sets.put(exercise, totalSets);
     }
 
     SetResult result(Exercise exercise, int number) {
         for (SetResult result : results) {
-            if (result.exercise == exercise && result.number == number) return result;
+            if (result.exercise.equals(exercise) && result.number == number) return result;
         }
         return null;
     }
@@ -146,9 +207,11 @@ final class WorkoutSession {
         }
         begin(now);
         SetResult next = new SetResult(exercise, number, reps, target, planned, now, reason);
+        next.calibration = profile(exercise).packed();
         for (int i = 0; i < results.size(); i++) {
             SetResult previous = results.get(i);
-            if (previous.exercise == exercise && previous.number == number) {
+            if (previous.exercise.equals(exercise) && previous.number == number) {
+                if (reason.equals("CORRECTED")) next.calibration = previous.calibration;
                 results.set(i, next);
                 return;
             }
@@ -159,14 +222,20 @@ final class WorkoutSession {
     void resetFrom(Exercise exercise, int number) {
         for (int i = results.size() - 1; i >= 0; i--) {
             SetResult result = results.get(i);
-            if (result.exercise == exercise && result.number >= number) results.remove(i);
+            if (result.exercise.equals(exercise) && result.number >= number) results.remove(i);
         }
+    }
+
+    void restore(Exercise exercise, int number, int reps, long now, String reason, int target, int planned, String calibration) {
+        Profile.unpack(exercise, calibration);
+        record(exercise, number, reps, now, reason, target, planned);
+        result(exercise, number).calibration = calibration;
     }
 
     int completedSets(Exercise exercise) {
         int count = 0;
         for (SetResult result : results) {
-            if (result.exercise == exercise) count++;
+            if (result.exercise.equals(exercise)) count++;
         }
         return count;
     }
@@ -174,7 +243,7 @@ final class WorkoutSession {
     int reps(Exercise exercise) {
         int count = 0;
         for (SetResult result : results) {
-            if (result.exercise == exercise) count += result.reps;
+            if (result.exercise.equals(exercise)) count += result.reps;
         }
         return count;
     }
@@ -190,25 +259,27 @@ final class WorkoutSession {
     }
 
     boolean complete() {
-        for (Exercise exercise : Exercise.values()) {
+        if (plans.isEmpty()) return false;
+        for (Exercise exercise : exercises()) {
             if (completedSets(exercise) < plannedSets(exercise)) return false;
         }
         return true;
     }
 
     Exercise nextExercise(Exercise current) {
-        Exercise[] exercises = Exercise.values();
+        Exercise[] exercises = exercises();
         for (int offset = 0; offset < exercises.length; offset++) {
-            Exercise candidate = exercises[(current.ordinal() + offset) % exercises.length];
+            Exercise candidate = exercises[(indexOf(current) + offset) % exercises.length];
             if (completedSets(candidate) < plannedSets(candidate)) return candidate;
         }
         return null;
     }
 
     String csv() {
+        if (!legacy()) return DynamicSessionCsv.write(this);
         StringBuilder output = new StringBuilder(4096);
         output.append(HEADER).append('\n');
-        for (Exercise exercise : Exercise.values()) {
+        for (Exercise exercise : exercises()) {
             row(output, "PLAN", exercise, target(exercise), plannedSets(exercise), 0, 0, 0, "");
             for (int number = 1; number <= plannedSets(exercise); number++) {
                 if (target(exercise, number) != target(exercise))
@@ -222,7 +293,7 @@ final class WorkoutSession {
             last = Math.max(last, result.completedAt);
         }
         int totalPlannedSets = 0;
-        for (Exercise exercise : Exercise.values()) {
+        for (Exercise exercise : exercises()) {
             row(output, "SUMMARY", exercise, target(exercise), plannedSets(exercise),
                     completedSets(exercise), reps(exercise), 0, "");
             totalPlannedSets += plannedSets(exercise);
@@ -248,6 +319,7 @@ final class WorkoutSession {
     }
 
     static WorkoutSession read(String csv) throws IOException {
+        if (csv.startsWith(DynamicSessionCsv.HEADER + "\n")) return DynamicSessionCsv.read(csv);
         try {
             BufferedReader reader = new BufferedReader(new StringReader(csv));
             if (!HEADER.equals(reader.readLine())) throw new IOException("Unknown workout format");
@@ -276,7 +348,7 @@ final class WorkoutSession {
             }
             if (session == null) throw new IOException("Empty workout");
             for (Exercise exercise : Exercise.values()) {
-                if (session.target(exercise) < 1 || session.plannedSets(exercise) < 1)
+                if (!session.plans.containsKey(exercise) || session.target(exercise) < 1 || session.plannedSets(exercise) < 1)
                     throw new IOException("Missing workout plan");
             }
             return session;

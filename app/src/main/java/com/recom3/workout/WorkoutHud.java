@@ -43,7 +43,7 @@ final class WorkoutHud extends View {
         screen("RECOM3 WORKOUT", running ? "COUNTING" : routineAvailable ? "NEW ROUTINE" : "PAUSED",
                 running || routineAvailable ? GREEN : MUTED,
                 "← → Exercise    OK " + (running ? "Pause" : "Start") + "    ↑ ↓ Menu");
-        lines[0] = profile.exercise.label.toUpperCase(Locale.US) + (routineApplied ? " · WEB" : "");
+        lines[0] = profile.exercise.label.toUpperCase(Locale.US) + (profile.experimental ? " · EXP" : routineApplied ? " · WEB" : "");
         count = Integer.toString(reps);
         countColor = flash || complete ? GREEN : WHITE;
         summary = "Target " + profile.get(TARGET) + "   ·   Set " + set + "/" + profile.get(SETS);
@@ -85,32 +85,33 @@ final class WorkoutHud extends View {
     }
 
     void routinePreview(WorkoutTemplate template, int exerciseIndex, int firstSet, String message) {
-        screen("NEW ROUTINE · REVIEW", (exerciseIndex + 1) + "/3", GREEN,
+        screen("NEW ROUTINE · REVIEW", (exerciseIndex + 1) + "/" + template.exercises().length, GREEN,
                 "← → Exercise   ↑ ↓ Sets   OK Accept   Back Later");
-        Exercise[] order = {Exercise.SQUAT, Exercise.PUSH_UP, Exercise.PULL_UP};
-        Exercise exercise = order[exerciseIndex];
+        Exercise exercise = template.exercises()[exerciseIndex];
         int[] goals = template.targets(exercise);
         lines[0] = exercise.label + "    ·    " + goals.length + " sets";
         for (int row = 1; row <= 4 && firstSet + row - 1 <= goals.length; row++) {
             int set = firstSet + row - 1;
             lines[row] = "Set " + set + "    " + goals[set - 1] + " reps";
         }
-        lines[5] = message.isEmpty() ? "Review targets, then OK to accept" : message;
+        lines[5] = message.isEmpty() ? (template.dynamic() ? "Experimental profiles · OK accept" : "Review targets, then OK to accept") : message;
         invalidate();
     }
 
     void summary(WorkoutSession session, boolean csvReady, boolean ice3Synced,
-                 boolean routineAvailable, boolean routineApplied) {
-        screen("CONGRATS!", session.totalReps() + " REPS", GREEN, csvReady ? "OK New workout    Back Review"
+                 boolean routineAvailable, boolean routineApplied, int page) {
+        screen("CONGRATS!", session.totalReps() + " REPS", GREEN, csvReady ? "← → Page   OK New workout   Back Review"
                 : "OK Retry CSV    Back Review");
         lines[0] = session.totalCompletedSets() + " sets completed"
                 + (routineAvailable ? " · NEW ROUTINE" : routineApplied ? " · WEB" : "");
-        int row = 1;
-        for (Exercise exercise : Exercise.values()) {
-            lines[row++] = exercise.label + "    " + session.reps(exercise) + " reps    ·    "
+        Exercise[] exercises = session.exercises();
+        int first = WorkoutNavigation.wrap(page, WorkoutNavigation.pages(exercises.length)) * 3;
+        for (int row = 1; row <= 3 && first + row - 1 < exercises.length; row++) {
+            Exercise exercise = exercises[first + row - 1];
+            lines[row] = exercise.label + "    " + session.reps(exercise) + " reps    ·    "
                     + session.completedSets(exercise) + "/" + session.plannedSets(exercise) + " sets";
         }
-        lines[4] = ice3Synced ? "Synced with ICE3" : "ICE3 sync pending";
+        lines[4] = !session.legacy() ? "Saved locally · v2 sync unavailable" : ice3Synced ? "Synced with ICE3" : "ICE3 sync pending";
         lines[5] = csvReady ? "Workout CSV saved" : "Saved locally · CSV export pending";
         invalidate();
     }
@@ -139,7 +140,7 @@ final class WorkoutHud extends View {
 
     void calibration(Profile profile, Profile.Setting setting, String message) {
         screen("CALIBRATION", profile.exercise.label, MUTED, "↑ ↓ Field    ← → Adjust    Back Menu");
-        lines[0] = "Experimental profiles";
+        lines[0] = profile.experimental ? "Cloned profile · UNVALIDATED" : "Local detection profile";
         lines[2] = setting.label + "    " + profile.display(setting);
         lines[4] = (setting.ordinal() + 1) + " / " + Profile.Setting.values().length;
         lines[5] = message.isEmpty() ? "Changes saved locally" : message;
@@ -197,6 +198,15 @@ final class WorkoutHud extends View {
         paint.setColor(color);
         paint.setTypeface(strong ? bold : regular);
         paint.setTextAlign(align);
+        float available = align == Paint.Align.LEFT ? 411 - x : align == Paint.Align.RIGHT ? x - 17 : 394;
+        if (paint.measureText(value) > available) {
+            while (value.length() > 0 && paint.measureText(value + "…") > available) {
+                int end = value.length() - 1;
+                if (end > 0 && Character.isLowSurrogate(value.charAt(end))) end--;
+                value = value.substring(0, end);
+            }
+            value += "…";
+        }
         canvas.drawText(value, x, y, paint);
     }
 }

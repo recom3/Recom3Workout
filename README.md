@@ -18,7 +18,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.recom3.workout/.WorkoutActivity
 ```
 
-The package is `com.recom3.workout`. Application updates must retain the existing package and signing identity. The test APK for version 0.1.12 is available locally at `build/installer/Recom3Workout-0.1.12-api16.apk`.
+The package is `com.recom3.workout`. Application updates must retain the existing package and signing identity. The test APK for version 0.1.14 is available locally at `build/installer/Recom3Workout-0.1.14-api16.apk`.
 
 Recom3Workout also provides a RIF installation package through the private release workflow. Distribution artifacts are generated locally and are not automatically installed or published. The catalog thumbnail is a transparent 64 × 64 PNG in `docs/recom3workout.png`.
 
@@ -36,6 +36,12 @@ The Jet preserves 100-rep targets, but the current Snow3 result receiver still c
 
 See [the protocol, safe handoff policy and real-device test steps](docs/template-sync.md). Result JSON schema 1 and the existing session sync queue are unchanged. Historical/uniform CSVs retain their format; numbered PLAN rows preserve nonuniform future targets in new sessions.
 
+## Dynamic exercise runtime (0.1.14 / code 15)
+
+Workout now supports bounded routines with 1–8 data-defined repetition exercises, individual targets and independent persistent local calibration. A previously unknown ID starts with a deep copy of the user's saved Pull-ups profile, marked **experimental/unvalidated**; changing it never changes Pull-ups. Calibration now also exposes direction, filtering, preparation and the installed detector mode, including Manual. Preview and Congrats support N exercises with pagination.
+
+The existing ICE3 v1 circuit is preserved. A separate experimental Jet-side v2 import and local result format prepare future integrations; **current ICE3/API cannot yet deliver or synchronize unknown exercises**. Dynamic results remain stored locally, never falsely reported synced. See [the exact development contract, storage and limitations](docs/dynamic-exercises.md). No new server endpoint or downloaded executable code is involved. This release does not establish Dips detection accuracy.
+
 ## Controls
 
 The app accepts the same Select/OK key events as Recom3Ghost. Use the Jet's directional touchpad swipes or equivalent D-pad inputs. [Recon Jet owner manual](https://fccid.io/m/895259af0d76fda203311f4ed5b2657f051e1a39543cc581d18ee9abe695fe49.pdf)
@@ -47,13 +53,13 @@ The app accepts the same Select/OK key events as Recom3Ghost. Use the Jet's dire
 | Workout setup | Up/Down selects Exercise, Set, Target reps or Total sets. Left/Right changes the selected value. Targets save per set; other existing targets are retained. Back returns to the menu. |
 | Diagnostics | OK starts a recording, then adds one ground-truth marker per press. Right saves and stops. Back saves and returns to the menu. |
 | Calibration | Up/Down selects a field, Left/Right adjusts it, and Back returns to the menu. Changes save immediately for the current exercise. |
-| Congrats | OK starts a new workout after CSV export succeeds. If export is pending, OK retries it. Back returns to the HUD for review. |
-| Routine review | Left/Right changes exercise (1/3 is the first exercise), Up/Down scrolls sets, OK accepts the whole routine, Back keeps it for later. |
+| Congrats | Left/Right or Up/Down changes summary pages. OK starts a new workout after CSV export succeeds. If export is pending, OK retries it. Back returns to the HUD for review. |
+| Routine review | Left/Right changes exercise (1/N is the first of N exercises), Up/Down scrolls sets, OK accepts the whole routine, Back keeps it for later. |
 | Replace synced routine | OK permits one valid incoming routine to replace the saved context for two minutes; Back cancels. The current workout stays unchanged. |
 
-Set completion saves the result, pauses counting and automatically prepares the next set with a zero counter. After the last set of an exercise, the app selects the next unfinished exercise (Squats → Push-ups → Pull-ups → Squats), skipping completed exercises. Press **OK** when ready to start each set. Left/Right can still select an exercise while paused. The default is three sets with targets of 8 pull-ups, 12 squats or 10 push-ups per set. Completed sets, exercise goals and the active workout survive relaunch. Keep the app in the foreground while detecting or recording.
+Set completion saves the result, pauses counting and automatically prepares the next set with a zero counter. After the last set of an exercise, the app selects the next unfinished exercise in routine order, skipping completed exercises and wrapping as needed. The legacy cycle is Squats → Push-ups → Pull-ups → Squats. Press **OK** when ready to start each set. Left/Right can still select an exercise while paused. The fallback is three sets with targets of 8 pull-ups, 12 squats or 10 push-ups per set. Completed sets, exercise goals and the active workout survive relaunch. Keep the app in the foreground while detecting or recording.
 
-A workout includes the configured sets of all three exercises. You can alternate exercises in rounds or complete each exercise in turn. **Congrats** appears when all three set goals are complete and shows the actual totals. Four sets of 10 squats, 5 push-ups and 4 pull-ups produce 40, 20 and 16 repetitions, or 76 in total.
+A workout includes exactly the exercises in its saved routine. Legacy/fallback routines include all three original exercises; dynamic routines may contain a different number. You can alternate exercises in rounds or complete each exercise in turn. **Congrats** appears when every exercise's set goal is complete and shows the actual totals. Four sets of 10 squats, 5 push-ups and 4 pull-ups produce 40, 20 and 16 repetitions, or 76 in total.
 
 **Add a rep** and **Subtract a rep** correct the current counter. Corrections to an already completed set also update its saved result. **Reset reps** reopens that set. **Next set** can explicitly end a partial set, whose actual count is saved with a MANUAL reason. **New workout** starts a fresh routine and retains earlier completed-set records in the archive.
 
@@ -67,7 +73,7 @@ Normal workouts save a CSV after each completed set to the app's external-files 
 adb pull /sdcard/Android/data/com.recom3.workout/files/workouts ./workouts
 ```
 
-Each CSV contains PLAN rows for exercise goals, SET rows with set numbers, actual repetitions and completion timestamps, SUMMARY rows per exercise and a TOTAL row for the workout. Timestamps include Unix milliseconds and UTC text. TARGET means the counter reached the rep goal, MANUAL identifies an explicit advance to the next set, and CORRECTED identifies an edited completed count. Completed-set targets stay recorded when goals for remaining sets change.
+Legacy CSVs contain PLAN rows for exercise goals, SET rows with set numbers, actual repetitions and completion timestamps, SUMMARY rows per exercise and a TOTAL row. Timestamps include Unix milliseconds and UTC text. Dynamic CSVs use the separate self-contained v2 snapshot described in [dynamic-exercises.md](docs/dynamic-exercises.md). TARGET means the counter reached the rep goal, MANUAL identifies an explicit advance to the next set, and CORRECTED identifies an edited completed count. Completed-set targets stay recorded when goals for remaining sets change.
 
 Workout CSV files are stored locally for later upload. Raw sensor recordings remain available under the separate `files/recordings` directory.
 

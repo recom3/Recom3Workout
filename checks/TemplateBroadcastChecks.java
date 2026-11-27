@@ -57,6 +57,18 @@ public final class TemplateBroadcastChecks {
         String manifest = new String(SyncFiles.read(new File(args[1], "app/src/main/AndroidManifest.xml"), 16384), "UTF-8");
         check(manifest.contains(".TemplateReceiver") && manifest.contains("com.recom3.workout.TEMPLATE"),
                 "manifest registers the TEMPLATE receiver for delivery while the activity is closed");
+        TemplateReceiver.allowReplacement(app);
+        WorkoutTemplate dynamic = DynamicRoutine.parse(DynamicChecks.bundle(5).getBytes("UTF-8"));
+        WorkoutWire v2 = new WorkoutWire(500, "com.recom3.snow3", WorkoutWire.ROUTINE_V2, dynamic.hash, dynamic.bytes());
+        new TemplateReceiver().onReceive(app, new Intent(WorkoutWire.ROUTINE_V2).putExtra("message", v2.encode()));
+        check(BroadcastReceiver.last.await(), "dynamic production broadcast completes off-thread");
+        check(app.receipts.size() == 3 && new TemplateStore(files).load().exercises().length == 5,
+                "production receiver stores five dynamic exercise definitions and routine");
+        WorkoutWire dynamicReceipt = WorkoutWire.decode(app.receipts.get(2).getByteArrayExtra("HUDConnectivityMessage"));
+        check(dynamicReceipt.action.equals(WorkoutWire.ROUTINE_V2_STORED) && dynamicReceipt.info.equals(dynamic.hash)
+                && new ProfileStore(files, null).load(dynamic.exercises()[3]).experimental,
+                "dynamic production receipt uses a separate action after persistent experimental calibration creation");
+        check(manifest.contains(WorkoutWire.ROUTINE_V2), "manifest exposes the distinct experimental v2 import action");
         System.out.println(passed + " broadcast checks passed (host Android boundaries; not device validation)");
         System.exit(0);
     }

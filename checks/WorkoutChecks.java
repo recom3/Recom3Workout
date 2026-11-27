@@ -21,7 +21,7 @@ public final class WorkoutChecks {
         Trace(Exercise exercise, double tilt) {
             engine = new MotionEngine(new Profile(exercise));
             engine.setRunning(true);
-            direction = exercise.direction;
+            direction = new Profile(exercise).get(DIRECTION);
             this.tilt = tilt;
             segment(0, 800);
         }
