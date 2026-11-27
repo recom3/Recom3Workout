@@ -56,6 +56,11 @@ final class WorkoutSync implements SyncBatch.Observer {
         worker.execute(new Runnable() {
             public void run() {
                 try {
+                    if (!snapshot.legacy()) {
+                        new DynamicResults(files).enqueue(snapshot);
+                        state(snapshot.id, SyncQueue.State.PENDING);
+                        return;
+                    }
                     SyncQueue.Entry entry = queue.enqueue(snapshot);
                     state(entry.id, entry.state);
                     retry();

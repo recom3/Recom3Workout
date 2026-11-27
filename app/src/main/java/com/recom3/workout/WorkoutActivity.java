@@ -41,6 +41,8 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
     private SensorStream accel, gyro;
     private SharedPreferences preferences;
     private Profile profile;
+    private ProfileStore profiles;
+    private int summaryPage;
     private MotionEngine workout, diagnostic;
     private WorkoutSession session;
     private SessionStore sessions;
@@ -66,6 +68,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         preferences = getSharedPreferences("workout", MODE_PRIVATE);
+        profiles = LocalProfiles.open(this);
         approvedTemplateHash = preferences.getString("routine_approved_hash", "");
         sessions = new SessionStore(getFilesDir(), getExternalFilesDir("workouts"));
         try {
@@ -88,7 +91,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         if (session.id.equals(preferences.getString("routine_session", "")))
             appliedTemplateHash = preferences.getString("routine_hash", "");
         SharedPreferences.Editor goals = preferences.edit();
-        for (Exercise exercise : Exercise.values()) {
+        for (Exercise exercise : session.exercises()) {
             goals.putInt(exercise.name() + "." + TARGET.name(), session.target(exercise));
             goals.putInt(exercise.name() + "." + SETS.name(), session.plannedSets(exercise));
         }
@@ -96,7 +99,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         sensors = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         accel = stream(Sensor.TYPE_ACCELEROMETER);
         gyro = stream(Sensor.TYPE_GYROSCOPE);
-        loadExercise(freshTemplate ? Exercise.SQUAT.ordinal() : preferences.getInt("exercise", 0));
+        loadExercise(freshTemplate && !session.dynamic ? session.indexOf(Exercise.SQUAT) : preferences.getInt("exercise", 0));
         if (state != null && session.id.equals(state.getString("workout_id"))) {
             set = Math.max(1, Math.min(state.getInt("set"), profile.get(SETS)));
             profile.change(TARGET, session.target(profile.exercise, set));
@@ -120,15 +123,14 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
     }
 
     private Profile readProfile(Exercise exercise) {
-        Profile loaded = new Profile(exercise);
-        // Load bounds in an order that also permits a saved pair above or below both defaults.
-        for (int pass = 0; pass < 2; pass++) {
-            for (Profile.Setting setting : SETTINGS) {
-                loaded.change(setting, preferences.getInt(exercise.name() + "." + setting.name(),
-                        loaded.get(setting)));
-            }
+        try { return profiles.load(exercise); }
+        catch (IOException failure) {
+            message = "Calibration unavailable · manual only";
+            Log.w(TAG, "Calibration retained; storage unavailable");
+            Profile fallback = new Profile(exercise);
+            fallback.change(Profile.Setting.MODE, 0);
+            return fallback;
         }
-        return loaded;
     }
 
     private Profile[] readProfiles() {
@@ -139,9 +141,9 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
     }
 
     private void loadExercise(int index) {
-        Exercise[] exercises = Exercise.values();
-        exerciseIndex = (index + exercises.length) % exercises.length;
-        profile = readProfile(exercises[exerciseIndex]);
+        Exercise[] exercises = session.exercises();
+        exerciseIndex = WorkoutNavigation.wrap(index, exercises.length);
+        profile = session.dynamic ? session.profile(exercises[exerciseIndex]) : readProfile(exercises[exerciseIndex]);
         profile.change(TARGET, session.target(profile.exercise));
         profile.change(SETS, session.plannedSets(profile.exercise));
         workout = new MotionEngine(profile);
@@ -292,7 +294,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
                 else if (select) {
                     if (!csvReady) exportSession();
                     else newWorkout();
-                }
+                } else summaryPage = WorkoutNavigation.wrap(summaryPage + (left || up ? -1 : 1), WorkoutNavigation.pages(session.exercises().length));
                 break;
             case REPLACE_ROUTINE:
                 if (select) {
@@ -307,11 +309,10 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
                     message = "Routine saved for later";
                 } else if (select) acceptRoutine();
                 else if (left || right) {
-                    previewExercise = (previewExercise + (right ? 1 : 2)) % 3;
+                    previewExercise = WorkoutNavigation.wrap(previewExercise + (right ? 1 : -1), previewTemplate.exercises().length);
                     previewFirstSet = 1;
                 } else {
-                    Exercise[] order = {Exercise.SQUAT, Exercise.PUSH_UP, Exercise.PULL_UP};
-                    int total = previewTemplate.targets(order[previewExercise]).length;
+                    int total = previewTemplate.targets(previewTemplate.exercises()[previewExercise]).length;
                     previewFirstSet = Math.max(1, Math.min(Math.max(1, total - 3), previewFirstSet + (down ? 1 : -1)));
                 }
                 break;
@@ -332,7 +333,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
             if (session.result(profile.exercise, set) == null) finishSet();
             else advanceAfterSet();
         }
-        else if (!accel.live(SystemClock.elapsedRealtime())) message = "Waiting for accelerometer";
+        else if (!profile.manual() && !accel.live(SystemClock.elapsedRealtime())) message = "Waiting for accelerometer";
         else {
             if (!session.started()) {
                 WorkoutSession next = new WorkoutSession(session);
@@ -363,6 +364,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
             case 4:
                 if (session.result(profile.exercise, set) == null) {
                     WorkoutSession next = new WorkoutSession(session);
+                    next.profile(profile);
                     next.record(profile.exercise, set, workout.count(), System.currentTimeMillis(),
                             complete() ? "TARGET" : "MANUAL");
                     if (!saveSession(next)) break;
@@ -421,21 +423,35 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         if (setting == TARGET || setting == SETS) {
             WorkoutSession next = new WorkoutSession(session);
             if (setting == TARGET) next.target(profile.exercise, set, profile.get(TARGET));
-            else next.resize(profile.exercise, profile.get(SETS));
+            else {
+                try { next.resize(profile.exercise, profile.get(SETS)); }
+                catch (IllegalArgumentException limit) { profile.change(setting, previous); message = "Total set limit reached"; return; }
+            }
             if (!saveSession(next)) {
                 profile.change(setting, previous);
                 return;
             }
             if (set > profile.get(SETS)) selectSet(profile.get(SETS));
         }
-        preferences.edit().putInt(key(setting), value).apply();
+        try {
+            profiles.save(profile);
+            if (session.dynamic) {
+                WorkoutSession next = new WorkoutSession(session); next.profile(profile);
+                if (!saveSession(next)) message = "Calibration saved · session retry needed";
+            }
+            preferences.edit().putInt(key(setting), value).apply();
+        } catch (IOException failure) {
+            if (setting != TARGET && setting != SETS) profile.change(setting, previous);
+            message = "Calibration save failed · retained";
+        }
     }
 
     private void correctCount(int delta) {
         WorkoutSession.SetResult previous = session.result(profile.exercise, set);
         if (previous != null) {
             WorkoutSession next = new WorkoutSession(session);
-            next.record(profile.exercise, set, Math.max(0, workout.count() + delta),
+            next.profile(profile);
+            next.record(profile.exercise, set, (int) Math.max(0L, Math.min(Integer.MAX_VALUE, (long) workout.count() + delta)),
                     previous.completedAt, "CORRECTED");
             if (!saveSession(next)) return;
         }
@@ -447,6 +463,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         workout.setRunning(false);
         if (setCompletedAt == 0) setCompletedAt = System.currentTimeMillis();
         WorkoutSession next = new WorkoutSession(session);
+        next.profile(profile);
         next.record(profile.exercise, set, workout.count(), setCompletedAt, "TARGET");
         if (saveSession(next)) advanceAfterSet();
     }
@@ -457,8 +474,8 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
             screen = Screen.SUMMARY;
             return;
         }
-        boolean sameExercise = next == profile.exercise;
-        loadExercise(next.ordinal());
+        boolean sameExercise = next.equals(profile.exercise);
+        loadExercise(session.indexOf(next));
         preferences.edit().putInt("exercise", exerciseIndex).apply();
         if (csvReady) message = sameExercise ? "Set saved · OK start" : "Next exercise · OK";
     }
@@ -504,10 +521,14 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         return sessionSnapshot(RoutineConsent.needsReview(template, approvedTemplateHash) ? null : template);
     }
 
-    private WorkoutSession sessionSnapshot(WorkoutTemplate template) {
+    private WorkoutSession sessionSnapshot(WorkoutTemplate template) throws IOException {
         freshTemplate = template != null;
         freshTemplateHash = template == null ? "" : template.hash;
-        return WorkoutSession.create(readProfiles(), template);
+        if (template == null) return WorkoutSession.create(readProfiles(), null);
+        Exercise[] exercises = template.exercises();
+        Profile[] selected = new Profile[exercises.length];
+        for (int i = 0; i < selected.length; i++) selected[i] = profiles.load(exercises[i]);
+        return WorkoutSession.create(selected, template);
     }
 
     private void markAppliedRoutine() {
@@ -532,7 +553,8 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         WorkoutSession next = sessionSnapshot(RoutineConsent.approved(template, approvedTemplateHash));
         if (saveSession(next)) {
             markAppliedRoutine();
-            if (freshTemplate) exerciseIndex = Exercise.SQUAT.ordinal();
+            if (freshTemplate) exerciseIndex = template.dynamic() ? 0 : session.indexOf(Exercise.SQUAT);
+            summaryPage = 0;
             loadExercise(exerciseIndex);
             preferences.edit().putInt("exercise", exerciseIndex).apply();
             message = "";
@@ -643,7 +665,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
                 break;
             case SUMMARY:
                 SyncQueue.State syncState = sync.state(session.id);
-                hud.summary(session, csvReady, syncState == SyncQueue.State.SYNCED, routineAvailable, routineApplied);
+                hud.summary(session, csvReady, syncState == SyncQueue.State.SYNCED, routineAvailable, routineApplied, summaryPage);
                 String notice = session.id + ":" + syncState;
                 if (!notice.equals(syncNotice) && syncState != SyncQueue.State.PENDING) {
                     syncNotice = notice;

@@ -11,12 +11,33 @@ final class WorkoutTemplate {
     final long revision;
     private final byte[] bytes;
     private final int[][] targets;
+    private Exercise[] order = {Exercise.SQUAT, Exercise.PUSH_UP, Exercise.PULL_UP};
+    private Map<Exercise,int[]> dynamicTargets;
+    ExerciseCatalog catalog;
     private WorkoutTemplate(String id, long revision, byte[] bytes, int[][] targets) throws IOException {
         this.id = id; this.revision = revision; this.bytes = bytes.clone(); this.targets = targets;
         hash = WorkoutWire.sha256(bytes);
     }
     byte[] bytes() { return bytes.clone(); }
-    int[] targets(Exercise exercise) { return targets[exercise.ordinal()].clone(); }
+    int[] targets(Exercise exercise) {
+        if (dynamic()) {
+            int[] goals = dynamicTargets.get(exercise);
+            if (goals == null) throw new IllegalArgumentException("Exercise absent");
+            return goals.clone();
+        }
+        return targets[exercise.ordinal()].clone();
+    }
+    Exercise[] exercises() { return order.clone(); }
+    boolean dynamic() { return dynamicTargets != null; }
+    static WorkoutTemplate dynamic(String id, long revision, byte[] bytes, ExerciseCatalog catalog,
+                                   LinkedHashMap<Exercise,int[]> plans) throws IOException {
+        WorkoutTemplate template = new WorkoutTemplate(id, revision, bytes, null);
+        template.catalog = catalog;
+        template.dynamicTargets = new LinkedHashMap<Exercise,int[]>();
+        for (Map.Entry<Exercise,int[]> entry : plans.entrySet()) template.dynamicTargets.put(entry.getKey(), entry.getValue().clone());
+        template.order = plans.keySet().toArray(new Exercise[plans.size()]);
+        return template;
+    }
     static WorkoutTemplate parse(byte[] bytes) throws IOException {
         Map<String, Object> root = TemplateJson.parse(bytes, MAX_WIRE);
         TemplateJson.fields(root, "schemaVersion", "workoutId", "revision", "exercises");
@@ -47,7 +68,7 @@ final class WorkoutTemplate {
         return new WorkoutTemplate((String) id, revision, bytes, targets);
     }
     byte[] receipt() throws IOException {
-        return ("{\"schemaVersion\":1,\"workoutId\":\"" + id + "\",\"revision\":" + revision
+        return ("{\"schemaVersion\":" + (dynamic() ? 2 : 1) + ",\"workoutId\":\"" + id + "\",\"revision\":" + revision
                 + ",\"status\":\"stored\"}").getBytes("UTF-8");
     }
 }

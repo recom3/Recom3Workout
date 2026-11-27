@@ -59,21 +59,22 @@ class TemplateStore {
         FileOutputStream stream = new FileOutputStream(pending);
         try {
             DataOutputStream out = new DataOutputStream(stream);
-            out.writeInt(MAGIC); out.writeUTF(template.hash); out.writeInt(payload.length); out.write(payload);
+            out.writeInt(template.dynamic() ? MAGIC + 1 : MAGIC); out.writeUTF(template.hash); out.writeInt(payload.length); out.write(payload);
             out.flush(); stream.getFD().sync();
         } finally { stream.close(); }
     }
     private static WorkoutTemplate read(File source) throws IOException {
         DataInputStream input = new DataInputStream(new ByteArrayInputStream(SyncFiles.read(source, 16600)));
         try {
-            if (input.readInt() != MAGIC) throw new IOException("invalid_template_record");
+            int magic = input.readInt();
+            if (magic != MAGIC && magic != MAGIC + 1) throw new IOException("invalid_template_record");
             String hash = input.readUTF();
             int length = input.readInt();
             if (length < 1 || length > WorkoutTemplate.MAX_WIRE || length != input.available())
                 throw new IOException("invalid_template_record");
             byte[] bytes = new byte[length]; input.readFully(bytes);
             if (!hash.equals(WorkoutWire.sha256(bytes))) throw new IOException("invalid_template_record");
-            return WorkoutTemplate.parse(bytes);
+            return magic == MAGIC ? WorkoutTemplate.parse(bytes) : DynamicRoutine.parse(bytes);
         } finally { input.close(); }
     }
 }

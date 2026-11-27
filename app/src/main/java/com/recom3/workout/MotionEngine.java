@@ -8,8 +8,7 @@ final class MotionEngine {
     private static final long GYRO_FRESH_NS = 80000000L;
     private static final long WARM_UP_NS = 300000000L;
     private static final long REST_WINDOW_NS = 800000000L;
-    private static final long PULL_UP_PREPARATION_NS = 1000000000L;
-    private final Exercise exercise;
+    private final Profile profile;
     private final RepDetector detector;
     private final long[] restTimes = new long[64];
     private final double[] restValues = new double[64];
@@ -24,7 +23,7 @@ final class MotionEngine {
     private int count;
 
     MotionEngine(Profile profile) {
-        exercise = profile.exercise;
+        this.profile = profile;
         detector = new RepDetector(profile);
     }
 
@@ -33,7 +32,7 @@ final class MotionEngine {
             detector.reset();
             armed = false;
             armStarted = lastAccel;
-            if (running && exercise == Exercise.PULL_UP) clearSensors();
+            if (running && profile.get(Profile.Setting.RESET_SENSORS) == 1) clearSensors();
         }
         this.running = running;
     }
@@ -43,7 +42,7 @@ final class MotionEngine {
     }
 
     boolean waitingForStillness() {
-        return running && !armed;
+        return running && !profile.manual() && !armed;
     }
 
     int count() {
@@ -51,7 +50,7 @@ final class MotionEngine {
     }
 
     void correct(int change) {
-        count = Math.max(0, count + change);
+        count = (int) Math.max(0L, Math.min(Integer.MAX_VALUE, (long) count + change));
         detector.reset();
     }
 
@@ -60,7 +59,7 @@ final class MotionEngine {
         detector.reset();
         armed = false;
         armStarted = lastAccel;
-        if (exercise == Exercise.PULL_UP) clearSensors();
+        if (profile.get(Profile.Setting.RESET_SENSORS) == 1) clearSensors();
     }
 
     void clearSensors() {
@@ -78,8 +77,9 @@ final class MotionEngine {
 
     String state() {
         if (!running) return "PAUSED";
+        if (profile.manual()) return "MANUAL";
         if (!warmedUp()) return "WARMING";
-        if (!armed) return exercise == Exercise.PULL_UP ? "PREPARING" : "HOLD_STILL";
+        if (!armed) return profile.get(Profile.Setting.RESET_SENSORS) == 1 ? "PREPARING" : "HOLD_STILL";
         return detector.state().name();
     }
 
@@ -96,6 +96,7 @@ final class MotionEngine {
     }
 
     boolean accel(long ns, float x, float y, float z) {
+        if (profile.manual()) return false;
         long delta = ns - lastAccel;
         if (delta <= 0) return false;
         double length = Math.sqrt(x * (double) x + y * (double) y + z * (double) z);
@@ -146,16 +147,16 @@ final class MotionEngine {
         if (!warmedUp()) baseline += dt / (0.15 + dt) * (projected - baseline);
         updateRestBaseline(ns, projected, gyroFresh ? wx * wx + wy * wy + wz * wz : 0, dt);
         double vertical = projected - baseline;
-        signal += dt / (exercise.filterTimeSeconds + dt) * (vertical - signal);
+        signal += dt / ((profile.get(Profile.Setting.FILTER_MS) / 1000.0) + dt) * (vertical - signal);
         if (!running || !warmedUp()) return false;
         if (!armed) {
             // Establish the workout posture before accepting an outbound phase.
-            double quiet = quietMean(ns, exercise.stillnessWindowNs, exercise.stillnessVariance);
-            if (Double.isNaN(quiet) && exercise == Exercise.PULL_UP
-                    && ns - armStarted >= PULL_UP_PREPARATION_NS) {
+            double quiet = quietMean(ns, profile.quietWindowNs(), (profile.get(Profile.Setting.VARIANCE) / 100.0));
+            if (Double.isNaN(quiet) && profile.preparationTimeoutNs() > 0
+                    && ns - armStarted >= profile.preparationTimeoutNs()) {
                 quiet = medianReference(ns);
             }
-            if (ns - armStarted >= exercise.stillnessWindowNs
+            if (ns - armStarted >= profile.quietWindowNs()
                     && !Double.isNaN(quiet)) {
                 baseline = quiet;
                 signal = 0;

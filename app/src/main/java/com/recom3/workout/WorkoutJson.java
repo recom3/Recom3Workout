@@ -9,7 +9,7 @@ import java.util.TimeZone;
 final class WorkoutJson {
     static long completedAt(WorkoutSession session) {
         long last = 0;
-        for (Exercise exercise : Exercise.values()) {
+        for (Exercise exercise : session.exercises()) {
             for (int number = 1; number <= 20; number++) {
                 WorkoutSession.SetResult result = session.result(exercise, number);
                 if (result != null) last = Math.max(last, result.completedAt);
@@ -19,21 +19,18 @@ final class WorkoutJson {
     }
 
     static String exerciseId(Exercise exercise) {
-        switch (exercise) {
-            case SQUAT: return "squats";
-            case PUSH_UP: return "push-ups";
-            default: return "pull-ups";
-        }
+        if (!exercise.legacy()) throw new IllegalArgumentException("Not a v1 exercise");
+        return exercise.id;
     }
 
-    private static String utc(long timestamp) {
+    static String utc(long timestamp) {
         SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
         format.setTimeZone(TimeZone.getTimeZone("UTC"));
         return format.format(new java.util.Date(timestamp));
     }
 
     static String encode(WorkoutSession session) throws IOException {
-        if (!session.complete() || !session.started()) throw new IOException("Workout is incomplete");
+        if (!session.legacy() || !session.complete() || !session.started()) throw new IOException("Workout is incomplete");
         StringBuilder json = new StringBuilder(8192);
         json.append("{\"schemaVersion\":1,\"sessionId\":\"").append(session.id)
                 .append("\",\"startedAt\":\"").append(utc(session.startedAt()))

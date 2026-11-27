@@ -24,6 +24,11 @@ final class SyncRecovery {
                 if (!committed.isFile()) committed = new File(directory, name);
                 WorkoutSession session = WorkoutSession.read(new String(SyncFiles.read(committed, 262144), "UTF-8"));
                 if (session.complete() && session.started()) {
+                    if (!session.legacy()) {
+                        new DynamicResults(files).enqueue(session);
+                        observer.state(session.id, SyncQueue.State.PENDING);
+                        continue;
+                    }
                     SyncQueue.Entry entry = queue.enqueue(session);
                     observer.state(entry.id, entry.state);
                 }

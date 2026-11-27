@@ -22,7 +22,7 @@ public final class TemplateReceiver extends BroadcastReceiver {
     private static String announcedHash = "";
     static { WORKER.allowCoreThreadTimeOut(true); }
     private static synchronized TemplateService service(Context context) {
-        if (service == null) service = new TemplateService(new TemplateStore(context.getFilesDir()));
+        if (service == null) service = new TemplateService(new TemplateStore(context.getFilesDir()), LocalProfiles.open(context));
         return service;
     }
     static void allowReplacement(Context context) {
@@ -30,7 +30,7 @@ public final class TemplateReceiver extends BroadcastReceiver {
     }
     static WorkoutTemplate latest(Context context) { return service(context).latest(); }
     @Override public void onReceive(Context context, Intent intent) {
-        if (!WorkoutWire.TEMPLATE.equals(intent.getAction())) return;
+        if (!WorkoutWire.TEMPLATE.equals(intent.getAction()) && !WorkoutWire.ROUTINE_V2.equals(intent.getAction())) return;
         final byte[] bytes;
         try { bytes = intent.getByteArrayExtra("message"); }
         catch (RuntimeException invalid) { return; }

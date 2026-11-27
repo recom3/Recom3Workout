@@ -16,9 +16,13 @@ public final class ReplayRecording {
         try {
             reader.readLine();
             String[] config = reader.readLine().split(",", -1);
-            Profile profile = new Profile(Exercise.valueOf(config[10]));
+            Exercise exercise;
+            try { exercise = Exercise.valueOf(config[10]); }
+            catch (IllegalArgumentException unknown) { exercise = new Exercise(config[10], config[10], "", 1); }
+            Profile profile = new Profile(exercise);
             for (int pass = 0; pass < 2; pass++) {
                 for (Profile.Setting setting : Profile.Setting.values()) {
+                    if (11 + setting.ordinal() >= config.length) continue;
                     double recorded = Double.parseDouble(config[11 + setting.ordinal()]);
                     int value = setting.ordinal() <= Profile.Setting.AMPLITUDE.ordinal()
                             ? (int) Math.round(recorded * 100) : (int) recorded;

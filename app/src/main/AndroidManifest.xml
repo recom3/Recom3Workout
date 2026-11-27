@@ -8,6 +8,7 @@
         <receiver android:name=".TemplateReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="com.recom3.workout.TEMPLATE" />
+                <action android:name="com.recom3.workout.ROUTINE_V2" />
             </intent-filter>
         </receiver>
         <activity android:name=".WorkoutActivity" android:exported="true" android:screenOrientation="landscape">
