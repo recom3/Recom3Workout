@@ -100,6 +100,11 @@ public final class DynamicChecks {
         final ProfileStore selectedStore = store; final Profile selected = cloned;
         rejects(new Operation() { public void run() throws Exception { selectedStore.save(selected); } }, "calibration commit failure is reported");
         check(Arrays.equals(stable, SyncFiles.read(profileFile, 1024)), "failed calibration save preserves committed bytes"); blocked.delete();
+        SyncFiles.write(profileFile, "damaged-calibration".getBytes("UTF-8"));
+        rejects(new Operation() { public void run() throws Exception { selectedStore.load(selected.exercise); } }, "damaged existing calibration is reported without reinitialization");
+        rejects(new Operation() { public void run() throws Exception { selectedStore.save(selected); } }, "fallback profile cannot silently overwrite a damaged saved calibration");
+        check(new String(SyncFiles.read(profileFile, 1024), "UTF-8").equals("damaged-calibration"), "unreadable calibration bytes remain available for recovery");
+        SyncFiles.write(profileFile, stable);
         final String valid = bundle(5);
         final WorkoutTemplate template = DynamicRoutine.parse(valid.getBytes("UTF-8"));
         check(template.dynamic() && template.exercises().length == 5 && template.exercises()[3].id.equals("dips"), "versioned definition/routine bundle creates five runtime exercises");

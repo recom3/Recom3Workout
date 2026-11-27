@@ -34,6 +34,11 @@ final class ProfileStore {
     void save(Profile profile) throws IOException {
         synchronized (ProfileStore.class) {
             String packed = profile.packed(); Profile.unpack(profile.exercise, packed);
+            File file = file(profile.exercise); SyncFiles.recover(file);
+            if (file.exists()) {
+                try { Profile.unpack(profile.exercise, TemplateJson.utf8(SyncFiles.read(file, 1024))); }
+                catch (IllegalArgumentException invalid) { throw new IOException("Saved calibration requires recovery", invalid); }
+            }
             SyncFiles.write(file(profile.exercise), packed.getBytes("UTF-8"));
         }
     }

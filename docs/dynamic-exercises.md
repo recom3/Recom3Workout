@@ -91,9 +91,9 @@ All original motion, session, TEMPLATE/consent and SESSION sync checks remain in
 
 Validated for this implementation:
 
-- **280 host checks passed:** 47 motion, 34 historical/session, 30 v1 result sync, 78 v1 template/consent, 59 dynamic model/calibration/storage, 13 actual-HUD checks and 19 production-broadcast checks.
+- **283 host checks passed:** 47 motion, 34 historical/session, 30 v1 result sync, 78 v1 template/consent, 62 dynamic model/calibration/storage, 13 actual-HUD checks and 19 production-broadcast checks.
 - All application, bundled Recon UI and generated resource Java sources compiled against the actual API 16 Android SDK using Java 7 source/target with JDK 8. The APK contains Dex/resources and no native libraries, so it adds no ABI-specific dependency for the original ARMv7 Jet. This does not replace a physical runtime test.
 - Final APK identifies `com.recom3.workout`, version 0.1.14 / code 15, minimum/target SDK 16, no testOnly/debuggable manifest attributes. API-16 v1 signature verification passed, and the signing certificate matches the previous 0.1.13 APK.
-- Local test APK: `build/installer/Recom3Workout-0.1.14-api16.apk`, **305,108 bytes**, SHA-256 `3399eb22df1238f1f0befea10a94d787b6f4e68cc980fb5f0cb1b7e1fc7846fa`. Generated binaries and local validation tooling are excluded from Git/PR.
+- Local test APK: `build/installer/Recom3Workout-0.1.14-api16.apk`, **305,169 bytes**, SHA-256 `a98413c259e7380178df96e5c869067bf745408fa46b27a6545ff3d20926d130`. Generated binaries and local validation tooling are excluded from Git/PR.
 
 Future work: agree the phone/API catalog and capability contracts; implement their respective consumers; test real end-to-end receipt/retry and API 16 resource/lifecycle behavior; collect actual Dips recordings before claiming recognition accuracy. Timed measurements, automatic tuning and calibration upload remain out of scope.
