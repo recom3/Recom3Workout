@@ -25,7 +25,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
     private static final String TAG = "Recom3Workout";
     private static final String[] ACTIONS = {
             "Workout setup", "Add a rep", "Subtract a rep", "Reset reps", "Next set",
-            "Diagnostics", "Calibration", "Export CSV", "New workout", "Replace synced routine", "Review synced routine"
+            "Diagnostics", "Calibration", "Export CSV", "New workout", "Replace synced routine", "Review synced routine", "Retry saved results"
     };
     private static final Profile.Setting[] SETTINGS = Profile.Setting.values();
     private final Handler handler = new Handler();
@@ -407,6 +407,10 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
                     else { showRoutine(template, false); return; }
                 } catch (IOException failure) { message = "Synced routine unreadable"; }
                 break;
+            case 11:
+                sync.retrySaved();
+                message = "Saved results retry queued";
+                break;
             default: return;
         }
         flashUntil = 0;
@@ -482,6 +486,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
 
     private boolean saveSession(WorkoutSession next) {
         try {
+            if (!next.legacy()) sync.invalidate(next.id);
             sessions.save(next);
             session = next;
             csvReady = !session.started();
@@ -651,6 +656,8 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
                 break;
             case MENU:
                 ACTIONS[8] = routineAvailable ? "New workout · synced routine" : "New workout";
+                ACTIONS[11] = "Retry results · " + (session.legacy() ? sync.state(session.id).toString()
+                        : sync.dynamicState(session.id).label);
                 hud.menu(ACTIONS, menuIndex);
                 break;
             case SETUP:
@@ -666,11 +673,12 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
             case SUMMARY:
                 SyncQueue.State syncState = sync.state(session.id);
                 hud.summary(session, csvReady, syncState == SyncQueue.State.SYNCED, routineAvailable, routineApplied, summaryPage);
+                if (!session.legacy()) hud.resultStatus(sync.dynamicState(session.id).label);
                 String notice = session.id + ":" + syncState;
-                if (!notice.equals(syncNotice) && syncState != SyncQueue.State.PENDING) {
+                if (session.legacy() && !notice.equals(syncNotice) && syncState != SyncQueue.State.PENDING) {
                     syncNotice = notice;
                     android.widget.Toast.makeText(this, syncState == SyncQueue.State.SYNCED
-                            ? "Workout synced with ICE3." : "Workout saved. ICE3 sync pending.",
+                            ? "Workout stored locally in ICE3 on the phone." : "Workout saved. ICE3 sync pending.",
                             android.widget.Toast.LENGTH_SHORT).show();
                 }
                 break;
