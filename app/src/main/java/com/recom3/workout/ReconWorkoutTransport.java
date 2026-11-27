@@ -12,6 +12,12 @@ final class ReconWorkoutTransport implements SyncBatch.Transport {
     private final Context context;
     ReconWorkoutTransport(Context context) { this.context = context.getApplicationContext(); }
 
+    static void sendObject(Context context, WorkoutWire frame) throws IOException {
+        Intent intent = new Intent("com.reconinstruments.mobilesdk.hudconnectivity.channel.object");
+        intent.putExtra("HUDConnectivityMessage", frame.encode());
+        context.sendBroadcast(intent);
+    }
+
     public boolean sendAndAwait(final SyncQueue.Entry entry, final int request, long timeoutMs)
             throws IOException, InterruptedException {
         if (Looper.myLooper() == Looper.getMainLooper()) throw new IllegalStateException("Sync must run off the main thread");

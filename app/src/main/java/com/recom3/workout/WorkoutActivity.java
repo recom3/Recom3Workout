@@ -20,12 +20,12 @@ import static com.recom3.workout.Profile.Setting.SETS;
 import static com.recom3.workout.Profile.Setting.TARGET;
 
 public final class WorkoutActivity extends Activity implements SensorEventListener {
-    private enum Screen { HUD, MENU, SETUP, DIAGNOSTICS, CALIBRATION, SUMMARY }
+    private enum Screen { HUD, MENU, SETUP, DIAGNOSTICS, CALIBRATION, SUMMARY, REPLACE_ROUTINE, ROUTINE_PREVIEW }
     private static final int SAMPLE_US = 25000;
     private static final String TAG = "Recom3Workout";
     private static final String[] ACTIONS = {
             "Workout setup", "Add a rep", "Subtract a rep", "Reset reps", "Next set",
-            "Diagnostics", "Calibration", "Export CSV", "New workout"
+            "Diagnostics", "Calibration", "Export CSV", "New workout", "Replace synced routine", "Review synced routine"
     };
     private static final Profile.Setting[] SETTINGS = Profile.Setting.values();
     private final Handler handler = new Handler();
@@ -47,6 +47,14 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
     private WorkoutSync sync;
     private String syncNotice = "";
     private boolean csvReady;
+    private boolean freshTemplate;
+    private String freshTemplateHash = "", appliedTemplateHash = "";
+    private WorkoutTemplate latestTemplate;
+    private WorkoutTemplate previewTemplate;
+    private String approvedTemplateHash = "", promptedTemplateHash = "";
+    private int previewExercise, previewFirstSet = 1;
+    private boolean previewStartNew;
+    private Screen previewReturn = Screen.HUD;
     private Screen screen = Screen.HUD;
     private CsvRecording recording;
     private int exerciseIndex, set = 1, menuIndex, settingIndex, setupIndex;
@@ -58,6 +66,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         preferences = getSharedPreferences("workout", MODE_PRIVATE);
+        approvedTemplateHash = preferences.getString("routine_approved_hash", "");
         sessions = new SessionStore(getFilesDir(), getExternalFilesDir("workouts"));
         try {
             session = sessions.load();
@@ -66,14 +75,18 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
             Log.e(TAG, message, failure);
         }
         if (session == null) {
-            session = new WorkoutSession(readProfiles());
             try {
+                session = freshSession();
                 sessions.save(session);
+                markAppliedRoutine();
             } catch (IOException failure) {
+                if (session == null) session = new WorkoutSession(readProfiles());
                 message = "Workout history save failed";
                 Log.e(TAG, message, failure);
             }
         }
+        if (session.id.equals(preferences.getString("routine_session", "")))
+            appliedTemplateHash = preferences.getString("routine_hash", "");
         SharedPreferences.Editor goals = preferences.edit();
         for (Exercise exercise : Exercise.values()) {
             goals.putInt(exercise.name() + "." + TARGET.name(), session.target(exercise));
@@ -83,9 +96,10 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         sensors = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         accel = stream(Sensor.TYPE_ACCELEROMETER);
         gyro = stream(Sensor.TYPE_GYROSCOPE);
-        loadExercise(preferences.getInt("exercise", 0));
+        loadExercise(freshTemplate ? Exercise.SQUAT.ordinal() : preferences.getInt("exercise", 0));
         if (state != null && session.id.equals(state.getString("workout_id"))) {
             set = Math.max(1, Math.min(state.getInt("set"), profile.get(SETS)));
+            profile.change(TARGET, session.target(profile.exercise, set));
             workout.reset();
             workout.correct(Math.max(0, state.getInt("reps")));
         }
@@ -136,6 +150,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
 
     private void selectSet(int number) {
         set = number;
+        profile.change(TARGET, session.target(profile.exercise, set));
         workout.reset();
         WorkoutSession.SetResult result = session.result(profile.exercise, set);
         if (result != null) workout.correct(result.reps);
@@ -152,6 +167,8 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
 
     @Override protected void onResume() {
         super.onResume();
+        try { latestTemplate = new TemplateStore(getFilesDir()).load(); }
+        catch (IOException unreadable) { Log.w(TAG, "Saved routine unavailable; current session retained"); }
         register(accel);
         register(gyro);
         if (session.started()) exportSession();
@@ -240,12 +257,14 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
                 message = "";
                 if (back) screen = session.complete() ? Screen.SUMMARY : Screen.MENU;
                 else if (up || down || select) {
-                    setupIndex = (setupIndex + (up ? 2 : 1)) % 3;
+                    setupIndex = (setupIndex + (up ? 3 : 1)) % 4;
                 } else if (setupIndex == 0) {
                     loadExercise(exerciseIndex + (right ? 1 : -1));
                     preferences.edit().putInt("exercise", exerciseIndex).apply();
+                } else if (setupIndex == 1) {
+                    selectSet(Math.max(1, Math.min(profile.get(SETS), set + (right ? 1 : -1))));
                 } else {
-                    changeSetting(setupIndex == 1 ? TARGET : SETS, right ? 1 : -1);
+                    changeSetting(setupIndex == 2 ? TARGET : SETS, right ? 1 : -1);
                 }
                 break;
             case DIAGNOSTICS:
@@ -275,12 +294,39 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
                     else newWorkout();
                 }
                 break;
+            case REPLACE_ROUTINE:
+                if (select) {
+                    TemplateReceiver.allowReplacement(this);
+                    message = "Send routine from ICE3 within 2 min";
+                    screen = Screen.HUD;
+                } else if (back) screen = Screen.MENU;
+                break;
+            case ROUTINE_PREVIEW:
+                if (back) {
+                    screen = previewReturn;
+                    message = "Routine saved for later";
+                } else if (select) acceptRoutine();
+                else if (left || right) {
+                    previewExercise = (previewExercise + (right ? 1 : 2)) % 3;
+                    previewFirstSet = 1;
+                } else {
+                    Exercise[] order = {Exercise.SQUAT, Exercise.PUSH_UP, Exercise.PULL_UP};
+                    int total = previewTemplate.targets(order[previewExercise]).length;
+                    previewFirstSet = Math.max(1, Math.min(Math.max(1, total - 3), previewFirstSet + (down ? 1 : -1)));
+                }
+                break;
         }
         render();
         return true;
     }
 
     private void toggleWorkout() {
+        if (!workout.running() && !session.started() && latestTemplate != null
+                && appliedTemplateHash.equals(latestTemplate.hash)
+                && RoutineConsent.needsReview(latestTemplate, approvedTemplateHash)) {
+            showRoutine(latestTemplate, false);
+            return;
+        }
         if (workout.running()) workout.setRunning(false);
         else if (complete()) {
             if (session.result(profile.exercise, set) == null) finishSet();
@@ -349,6 +395,16 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
             case 8:
                 newWorkout();
                 return;
+            case 9:
+                screen = Screen.REPLACE_ROUTINE;
+                return;
+            case 10:
+                try {
+                    WorkoutTemplate template = new TemplateStore(getFilesDir()).load();
+                    if (template == null) message = "No synced routine saved";
+                    else { showRoutine(template, false); return; }
+                } catch (IOException failure) { message = "Synced routine unreadable"; }
+                break;
             default: return;
         }
         flashUntil = 0;
@@ -364,7 +420,8 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         }
         if (setting == TARGET || setting == SETS) {
             WorkoutSession next = new WorkoutSession(session);
-            next.plan(profile.exercise, profile.get(TARGET), profile.get(SETS));
+            if (setting == TARGET) next.target(profile.exercise, set, profile.get(TARGET));
+            else next.resize(profile.exercise, profile.get(SETS));
             if (!saveSession(next)) {
                 profile.change(setting, previous);
                 return;
@@ -441,12 +498,71 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
         }
     }
 
+    private WorkoutSession freshSession() throws IOException {
+        WorkoutTemplate template = new TemplateStore(getFilesDir()).load();
+        latestTemplate = template;
+        return sessionSnapshot(RoutineConsent.needsReview(template, approvedTemplateHash) ? null : template);
+    }
+
+    private WorkoutSession sessionSnapshot(WorkoutTemplate template) {
+        freshTemplate = template != null;
+        freshTemplateHash = template == null ? "" : template.hash;
+        return WorkoutSession.create(readProfiles(), template);
+    }
+
+    private void markAppliedRoutine() {
+        appliedTemplateHash = freshTemplateHash;
+        preferences.edit().putString("routine_session", session.id).putString("routine_hash", appliedTemplateHash).apply();
+    }
+
     private void newWorkout() {
-        WorkoutSession next = new WorkoutSession(readProfiles());
+        try {
+            WorkoutTemplate template = new TemplateStore(getFilesDir()).load();
+            latestTemplate = template;
+            if (RoutineConsent.needsReview(template, approvedTemplateHash)) { showRoutine(template, true); return; }
+            startNewWorkout(template);
+        }
+        catch (IOException failure) {
+            message = "Synced routine unreadable";
+            Log.w(TAG, "Cannot start a new routine; existing session retained");
+        }
+    }
+
+    private void startNewWorkout(WorkoutTemplate template) throws IOException {
+        WorkoutSession next = sessionSnapshot(RoutineConsent.approved(template, approvedTemplateHash));
         if (saveSession(next)) {
+            markAppliedRoutine();
+            if (freshTemplate) exerciseIndex = Exercise.SQUAT.ordinal();
             loadExercise(exerciseIndex);
+            preferences.edit().putInt("exercise", exerciseIndex).apply();
             message = "";
             screen = Screen.HUD;
+        }
+    }
+
+    private void showRoutine(WorkoutTemplate template, boolean startNew) {
+        previewTemplate = template;
+        promptedTemplateHash = template.hash;
+        previewExercise = 0;
+        previewFirstSet = 1;
+        previewStartNew = startNew;
+        previewReturn = screen == Screen.SUMMARY ? Screen.SUMMARY : Screen.HUD;
+        message = "";
+        screen = Screen.ROUTINE_PREVIEW;
+    }
+
+    private void acceptRoutine() {
+        if (!preferences.edit().putString("routine_approved_hash", previewTemplate.hash).commit()) {
+            message = "Acceptance save failed · OK retry";
+            return;
+        }
+        approvedTemplateHash = previewTemplate.hash;
+        if (previewStartNew || !session.started() || session.complete()) {
+            try { startNewWorkout(previewTemplate); }
+            catch (IOException failure) { message = "Routine cannot be started"; }
+        } else {
+            screen = Screen.HUD;
+            message = "Accepted for next workout";
         }
     }
 
@@ -497,17 +613,27 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
 
     private void render() {
         long now = SystemClock.elapsedRealtime();
+        WorkoutTemplate received = TemplateReceiver.latest(this);
+        if (received != null) latestTemplate = received;
+        boolean routineAvailable = latestTemplate != null && !latestTemplate.hash.equals(appliedTemplateHash);
+        boolean routineApplied = !appliedTemplateHash.isEmpty();
+        if (RoutineConsent.needsReview(latestTemplate, approvedTemplateHash)
+                && !latestTemplate.hash.equals(promptedTemplateHash)
+                && (screen == Screen.SUMMARY || screen == Screen.MENU || screen == Screen.HUD && !workout.running()))
+            showRoutine(latestTemplate, false);
         switch (screen) {
             case HUD:
                 hud.workout(profile, workout.count(), set, workout.running(), complete(),
                         now < flashUntil, accel.status(now), gyro.status(now),
-                        workout.waitingForStillness() ? "Hold still to start" : message);
+                        workout.waitingForStillness() ? "Hold still to start" : message, routineAvailable, routineApplied);
                 break;
             case MENU:
+                ACTIONS[8] = routineAvailable ? "New workout · synced routine" : "New workout";
                 hud.menu(ACTIONS, menuIndex);
                 break;
             case SETUP:
-                hud.setup(profile, setupIndex, message);
+                hud.setup(profile, set, setupIndex, message.isEmpty() && routineAvailable
+                        ? "New routine ready · Menu > New workout" : message);
                 break;
             case DIAGNOSTICS:
                 hud.diagnostics(profile, accel, gyro, diagnostic, recording, now, message);
@@ -517,7 +643,7 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
                 break;
             case SUMMARY:
                 SyncQueue.State syncState = sync.state(session.id);
-                hud.summary(session, csvReady, syncState == SyncQueue.State.SYNCED);
+                hud.summary(session, csvReady, syncState == SyncQueue.State.SYNCED, routineAvailable, routineApplied);
                 String notice = session.id + ":" + syncState;
                 if (!notice.equals(syncNotice) && syncState != SyncQueue.State.PENDING) {
                     syncNotice = notice;
@@ -525,6 +651,12 @@ public final class WorkoutActivity extends Activity implements SensorEventListen
                             ? "Workout synced with ICE3." : "Workout saved. ICE3 sync pending.",
                             android.widget.Toast.LENGTH_SHORT).show();
                 }
+                break;
+            case REPLACE_ROUTINE:
+                hud.replaceRoutine();
+                break;
+            case ROUTINE_PREVIEW:
+                hud.routinePreview(previewTemplate, previewExercise, previewFirstSet, message);
                 break;
         }
     }

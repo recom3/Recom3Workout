@@ -17,14 +17,26 @@ New-Item -ItemType Directory -Force -Path $out | Out-Null
     "$source/WorkoutSession.java" "$source/SessionStore.java" `
     "$source/WorkoutJson.java" "$source/SyncFiles.java" "$source/SyncQueue.java" `
     "$source/WorkoutWire.java" "$source/SyncBatch.java" "$source/SyncRecovery.java" `
+    "$source/TemplateJson.java" "$source/WorkoutTemplate.java" "$source/TemplateStore.java" "$source/TemplateService.java" `
+    "$source/RoutineConsent.java" `
     "$PSScriptRoot/WorkoutChecks.java" "$PSScriptRoot/ReplayRecording.java" "$PSScriptRoot/SessionChecks.java" `
-    "$PSScriptRoot/SyncChecks.java"
+    "$PSScriptRoot/SyncChecks.java" "$PSScriptRoot/TemplateChecks.java"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & "$Jdk/bin/java.exe" -ea -cp $out com.recom3.workout.WorkoutChecks
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & "$Jdk/bin/java.exe" -ea -cp $out com.recom3.workout.SessionChecks $out
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & "$Jdk/bin/java.exe" -ea -cp $out com.recom3.workout.SyncChecks $out
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& "$Jdk/bin/java.exe" -ea -cp $out com.recom3.workout.TemplateChecks $out $PSScriptRoot
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$hostOut = Join-Path $out 'host-android'
+New-Item -ItemType Directory -Force -Path $hostOut | Out-Null
+$stubs = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'host-android') -Filter '*.java' -Recurse | Select-Object -ExpandProperty FullName)
+& "$Jdk/bin/javac.exe" -encoding UTF-8 -source 1.7 -target 1.7 -cp $out -d $hostOut @stubs `
+    "$source/ReconWorkoutTransport.java" "$source/TemplateReceiver.java" "$PSScriptRoot/TemplateBroadcastChecks.java"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& "$Jdk/bin/java.exe" -ea -cp "$hostOut;$out" com.recom3.workout.TemplateBroadcastChecks $out (Join-Path $PSScriptRoot '..')
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($Recording) {
     if ($ExpectedReps -lt 0) { throw 'Supply -ExpectedReps from the actual exercise count.' }
