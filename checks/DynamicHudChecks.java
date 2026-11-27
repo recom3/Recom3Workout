@@ -27,7 +27,7 @@ public final class DynamicHudChecks {
         for (int page = 0; page < 3; page++) {
             hud.summary(session, true, false, false, true, page);
             String[] rows = (String[])field(hud, "lines");
-            check(rows[1].contains(session.exercises()[page * 3].label) && rows[4].contains("v2 sync unavailable")
+            check(rows[1].contains(session.exercises()[page * 3].label) && rows[4].contains("Saved locally")
                     && rows[5].contains("CSV saved"), "actual summary page " + (page + 1) + " preserves status rows without array overflow");
             hud.onDraw(new android.graphics.Canvas());
         }

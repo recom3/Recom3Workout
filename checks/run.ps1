@@ -21,7 +21,7 @@ New-Item -ItemType Directory -Force -Path $out | Out-Null
     "$source/RoutineConsent.java" `
     "$source/ProfileStore.java" "$source/DefinitionStore.java" "$source/ExerciseCatalog.java" "$source/DynamicRoutine.java" `
     "$source/CsvFields.java" "$source/DynamicSessionCsv.java" "$source/JsonText.java" `
-    "$source/DynamicWorkoutJson.java" "$source/DynamicResults.java" "$source/WorkoutNavigation.java" `
+    "$source/DynamicDelivery.java" "$source/DynamicWorkoutJson.java" "$source/DynamicResults.java" "$source/WorkoutNavigation.java" `
     "$PSScriptRoot/WorkoutChecks.java" "$PSScriptRoot/ReplayRecording.java" "$PSScriptRoot/SessionChecks.java" `
     "$PSScriptRoot/SyncChecks.java" "$PSScriptRoot/TemplateChecks.java" "$PSScriptRoot/DynamicChecks.java"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -39,9 +39,11 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 New-Item -ItemType Directory -Force -Path $hostOut | Out-Null
 $stubs = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'host-android') -Filter '*.java' -Recurse | Select-Object -ExpandProperty FullName)
 & "$Jdk/bin/javac.exe" -encoding UTF-8 -source 1.7 -target 1.7 -cp $out -d $hostOut @stubs `
-    "$source/ReconWorkoutTransport.java" "$source/TemplateReceiver.java" "$source/LocalProfiles.java" `
+    "$source/WorkoutSync.java" "$source/ReconWorkoutTransport.java" "$source/TemplateReceiver.java" "$source/LocalProfiles.java" `
     "$source/SensorStream.java" "$source/CsvRecording.java" "$source/WorkoutHud.java" `
-    "$PSScriptRoot/TemplateBroadcastChecks.java" "$PSScriptRoot/DynamicHudChecks.java"
+    "$PSScriptRoot/DynamicTransportChecks.java" "$PSScriptRoot/TemplateBroadcastChecks.java" "$PSScriptRoot/DynamicHudChecks.java"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& "$Jdk/bin/java.exe" -ea -cp "$hostOut;$out" com.recom3.workout.DynamicTransportChecks $out
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & "$Jdk/bin/java.exe" -ea -cp "$hostOut;$out" com.recom3.workout.DynamicHudChecks $out
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

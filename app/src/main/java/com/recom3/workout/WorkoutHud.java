@@ -111,10 +111,12 @@ final class WorkoutHud extends View {
             lines[row] = exercise.label + "    " + session.reps(exercise) + " reps    ·    "
                     + session.completedSets(exercise) + "/" + session.plannedSets(exercise) + " sets";
         }
-        lines[4] = !session.legacy() ? "Saved locally · v2 sync unavailable" : ice3Synced ? "Synced with ICE3" : "ICE3 sync pending";
+        lines[4] = !session.legacy() ? "Saved locally · pending" : ice3Synced ? "Stored in ICE3 · phone local" : "ICE3 sync pending";
         lines[5] = csvReady ? "Workout CSV saved" : "Saved locally · CSV export pending";
         invalidate();
     }
+
+    void resultStatus(String label) { lines[4] = label; invalidate(); }
 
     void diagnostics(Profile profile, SensorStream accel, SensorStream gyro, MotionEngine engine,
                      CsvRecording recording, long now, String message) {

@@ -18,7 +18,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.recom3.workout/.WorkoutActivity
 ```
 
-The package is `com.recom3.workout`. Application updates must retain the existing package and signing identity. The test APK for version 0.1.14 is available locally at `build/installer/Recom3Workout-0.1.14-api16.apk`.
+The package is `com.recom3.workout`. Application updates must retain the existing package and signing identity. The test APK for version 0.1.15 / code 16 is available locally at `build/installer/Recom3Workout-0.1.15-api16.apk`.
 
 Recom3Workout also provides a RIF installation package through the private release workflow. Distribution artifacts are generated locally and are not automatically installed or published. The catalog thumbnail is a transparent 64 × 64 PNG in `docs/recom3workout.png`.
 
@@ -40,7 +40,7 @@ See [the protocol, safe handoff policy and real-device test steps](docs/template
 
 Workout now supports bounded routines with 1–8 data-defined repetition exercises, individual targets and independent persistent local calibration. A previously unknown ID starts with a deep copy of the user's saved Pull-ups profile, marked **experimental/unvalidated**; changing it never changes Pull-ups. Calibration now also exposes direction, filtering, preparation and the installed detector mode, including Manual. Preview and Congrats support N exercises with pagination.
 
-The existing ICE3 v1 circuit is preserved. A separate experimental Jet-side v2 import and local result format prepare future integrations; **current ICE3/API cannot yet deliver or synchronize unknown exercises**. Dynamic results remain stored locally, never falsely reported synced. See [the exact development contract, storage and limitations](docs/dynamic-exercises.md). No new server endpoint or downloaded executable code is involved. This release does not establish Dips detection accuracy.
+Version **0.1.15 / code 16** connects the existing dynamic-result outbox to Recon OBJECT. Each result first requires the exact ICE3 capability response, then a matching durable receipt for the original saved bytes. **Stored in ICE3** means local phone storage; server upload is independent. Menu → **Retry results** retries saved results without starting another workout. Oversized, incompatible, timed-out or failed deliveries remain local. See [the result negotiation and receipt contract](docs/results-v2-sync.md). The existing ICE3 v1 circuit and routine acceptance are preserved. See [the exact development contract, storage and limitations](docs/dynamic-exercises.md). No new server endpoint or downloaded executable code is involved. This release does not establish Dips detection accuracy.
 
 ## Controls
 
@@ -49,7 +49,7 @@ The app accepts the same Select/OK key events as Recom3Ghost. Use the Jet's dire
 | Screen | Controls |
 | --- | --- |
 | Workout | Left/Right selects an exercise while paused and restores its set progress. OK starts or pauses. Up/Down opens the menu and pauses detection. Back pauses a running workout or exits from the paused HUD. |
-| Menu | Move with the directions and press OK to select Workout setup, add or subtract a rep, reset the current set, advance to the next set, open Diagnostics or Calibration, export CSV files, or start a new workout. Back returns to the workout. |
+| Menu | Move with the directions and press OK to select Workout setup, add or subtract a rep, reset the current set, advance to the next set, open Diagnostics or Calibration, export CSV files, retry saved results, or start a new workout. Back returns to the workout. |
 | Workout setup | Up/Down selects Exercise, Set, Target reps or Total sets. Left/Right changes the selected value. Targets save per set; other existing targets are retained. Back returns to the menu. |
 | Diagnostics | OK starts a recording, then adds one ground-truth marker per press. Right saves and stops. Back saves and returns to the menu. |
 | Calibration | Up/Down selects a field, Left/Right adjusts it, and Back returns to the menu. Changes save immediately for the current exercise. |

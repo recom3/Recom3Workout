@@ -6,6 +6,9 @@ import java.security.MessageDigest;
 
 /** Existing Recon HUDConnectivityMessage envelope (20-byte header + UTF-8 fields). */
 final class WorkoutWire {
+    static final String CAPABILITIES = "com.recom3.workout.CAPABILITIES";
+    static final String CAPABILITIES_RESULT = "com.recom3.workout.CAPABILITIES_RESULT";
+    static final String CAPABILITIES_JSON = "{\"schemaVersion\":1,\"sessionSchemas\":[1,2],\"maxSessionBytes\":20000,\"maxFrameBytes\":25600}";
     static final String SESSION = "com.recom3.workout.SESSION";
     static final String STORED = "com.recom3.workout.SESSION_STORED";
     static final String TEMPLATE = "com.recom3.workout.TEMPLATE";
